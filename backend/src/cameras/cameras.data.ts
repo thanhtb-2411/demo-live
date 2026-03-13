@@ -33,7 +33,7 @@ export interface CameraConfig {
 // Thay bằng RTSP URL thực của camera khi triển khai production.
 
 // FAKE: lấy luồng từ FFmpeg loop video.MOV qua MediaMTX (chỉ dùng khi chưa có camera thực)
-const DEMO_RTSP = "rtsp://admin:8TuwdmlF@155.248.185.149:27720/1/2";
+const DEMO_RTSP = process.env.DEMO_RTSP || "rtsp://localhost:8554/demo_feed";
 
 export const CAMERA_CONFIG: CameraConfig = {
   cameras: [

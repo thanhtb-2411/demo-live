@@ -4,8 +4,8 @@ node_modules/
 
 # Build outputs
 .next/
-dist/
-build/
+**/dist/
+**/build/
 
 # Environment
 .env
@@ -33,3 +33,9 @@ recordings/
 .yarn/install-state.gz
 .yarn/cache/
 backend/.yarn/
+
+# Build outputs
+backend/dist/
+backend/.yarn/
+backend/.pnp.cjs
+backend/.pnp.loader.mjs

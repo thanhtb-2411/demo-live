@@ -19,5 +19,42 @@ services:
       - ./mediamtx.yml:/mediamtx.yml:ro
       - recordings:/recordings
 
+  # ----------------------------------------------------------
+  # 2. NestJS Backend
+  # ----------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backend
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    environment:
+      - MEDIAMTX_HOST=${MEDIAMTX_HOST:-localhost}
+      - MEDIAMTX_API_PORT=${MEDIAMTX_API_PORT:-9997}
+      - MEDIAMTX_WEBRTC_PORT=${MEDIAMTX_WEBRTC_PORT:-8889}
+      - MEDIAMTX_PLAYBACK_PORT=${MEDIAMTX_PLAYBACK_PORT:-9996}
+      - JWT_SECRET=${JWT_SECRET}
+      - DEMO_RTSP=${DEMO_RTSP}
+
+  # ----------------------------------------------------------
+  # 3. Next.js Frontend
+  # ----------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    environment:
+      - BACKEND_URL=http://localhost:3001
+    depends_on:
+      - backend
+
 volumes:
   recordings:
