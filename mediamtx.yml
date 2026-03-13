@@ -1,10 +1,10 @@
 ###############################################################
-# MediaMTX – Cấu hình tối thiểu cho hệ thống Live Stream Camera
-# WebRTC (WHEP) + REST API động
+# MediaMTX – Cấu hình cho hệ thống Live Stream Camera
+# WebRTC (WHEP) + HLS (DVR) + REST API động
 ###############################################################
 
 # Mức độ log: error | warn | info | debug
-logLevel: info
+logLevel: debug
 logDestinations: [stdout]
 
 ###############################################################
@@ -23,37 +23,21 @@ api: yes
 apiAddress: :9997
 
 ###############################################################
-# Playback Server – Cho phép xem lại video đã ghi
-# Tương tự tính năng DVR của YouTube Live.
-# API: GET http://localhost:9996/list?path={id}
-#      GET http://localhost:9996/get?path={id}&start=...&duration=...
-###############################################################
-playback: yes
-playbackAddress: :9996
-
-###############################################################
-# Recording – Ghi video từ tất cả paths xuống disk
-# Mỗi segment = 1 giờ, tự xóa sau 24 giờ.
-###############################################################
-recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S-%f
-recordFormat: fmp4
-recordPartDuration: 1s
-recordSegmentDuration: 1h
-recordDeleteAfter: 24h
-
-###############################################################
-# WebRTC Server – Giao thức phát WHEP đến trình duyệt
+# WebRTC Server – Giao thức phát WHEP đến trình duyệt (LIVE)
 # Cổng 8889 được trình duyệt truy cập trực tiếp.
+# Độ trễ: < 0.5s
 ###############################################################
 webrtc: yes
 webrtcAddress: :8889
+# TCP ICE mux: fallback ổn định hơn UDP cho long-running sessions
+# (tránh ICE: disconnected khi UDP state bị expire trên router/switch)
+webrtcICETCPMuxAddress: :8887
 
 ###############################################################
 # RTSP Server – MediaMTX dùng nội bộ để kéo luồng từ Camera
 ###############################################################
 rtsp: yes
 rtspAddress: :8554
-
 ###############################################################
 # Paths
 ###############################################################

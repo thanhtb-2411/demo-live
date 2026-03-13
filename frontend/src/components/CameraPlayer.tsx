@@ -3,37 +3,30 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import styles from "./CameraPlayer.module.css";
 
-export interface RecordingSegment {
-  start: string; // ISO 8601
-  duration: number; // seconds
-  durationLabel: string;
-  label: string;
-  url: string;
-}
-
 interface CameraPlayerProps {
   cameraId: string;
   cameraName: string;
-  streamUrl: string; // WHEP URL
-  segments: RecordingSegment[]; // sorted newest-first from backend
-  playbackBaseUrl: string; // e.g. http://localhost:9996
-  playbackToken: string;
+  streamUrl: string; // WHEP URL for live WebRTC
+  dvrWindowSeconds: number; // Max DVR window (config-based)
   onClose: () => void;
 }
 
 type Mode = "live" | "dvr";
 type LiveStatus = "connecting" | "playing" | "error";
 
-function sortOldestFirst(segs: RecordingSegment[]): RecordingSegment[] {
-  return [...segs].sort(
-    (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime(),
-  );
-}
-
 function fmtTime(d: Date) {
   return d.toLocaleTimeString("vi-VN", {
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: "Asia/Ho_Chi_Minh",
+  });
+}
+
+function fmtTimeWithSec(d: Date) {
+  return d.toLocaleTimeString("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
     timeZone: "Asia/Ho_Chi_Minh",
   });
 }
@@ -50,79 +43,118 @@ function fmtDateTime(d: Date) {
   });
 }
 
+/** Human-readable relative time */
+function relativeLabel(seconds: number): string {
+  if (seconds < 5) return "Vừa xong";
+  if (seconds < 60) return `${Math.floor(seconds)}s trước`;
+  const min = Math.floor(seconds / 60);
+  if (min < 60) return `${min} phút trước`;
+  const hr = Math.floor(min / 60);
+  const remainMin = min % 60;
+  if (remainMin === 0) return `${hr} giờ trước`;
+  return `${hr}h ${remainMin}ph trước`;
+}
+
 export default function CameraPlayer({
-  cameraId,
   cameraName,
   streamUrl,
-  segments,
-  playbackBaseUrl,
-  playbackToken,
+  dvrWindowSeconds,
   onClose,
 }: CameraPlayerProps) {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  // ── Refs ──────────────────────────────────────────────────
+  const liveVideoRef = useRef<HTMLVideoElement>(null);
+  const dvrVideoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  // WebM init segment (chunk 0): phải luôn được giữ để blob có header hợp lệ
+  const initChunkRef = useRef<Blob | null>(null);
+  // Data chunks (chunk 1+): được trim để giới hạn 5 phút
+  const chunksRef = useRef<Blob[]>([]);
+  const objectUrlRef = useRef<string | null>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
-  const dvrClipStartRef = useRef<Date | null>(null);
+  const streamStartRef = useRef<number>(Date.now()); // khi user bắt đầu xem
+  const modeRef = useRef<Mode>("live");
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryCountRef = useRef<number>(0);
 
+  // ── State ─────────────────────────────────────────────────
   const [mode, setMode] = useState<Mode>("live");
+  const setModeSync = (m: Mode) => {
+    modeRef.current = m;
+    setMode(m);
+  };
   const [liveStatus, setLiveStatus] = useState<LiveStatus>("connecting");
   const [errorMsg, setErrorMsg] = useState("");
-  const [dvrTime, setDvrTime] = useState<Date | null>(null);
   const [nowTime, setNowTime] = useState(() => new Date());
   const [isDragging, setIsDragging] = useState(false);
   const [dragPercent, setDragPercent] = useState<number | null>(null);
+  const [hoverPercent, setHoverPercent] = useState<number | null>(null);
+  const [isHoveringTrack, setIsHoveringTrack] = useState(false);
+  const [dvrOffsetFromLive, setDvrOffsetFromLive] = useState(0);
+  const [retryKey, setRetryKey] = useState(0);
 
-  // Sorted oldest → newest for timeline drawing
-  const sortedSegs = sortOldestFirst(segments);
-  const timelineStart =
-    sortedSegs.length > 0 ? new Date(sortedSegs[0].start) : null;
-  const timelineEnd = nowTime;
-  const timelineMs = timelineStart
-    ? timelineEnd.getTime() - timelineStart.getTime()
-    : 0;
+  // For correctly tracking timeline while in closure
+  const timelineSecRef = useRef<number>(0);
 
-  // Refresh "now" so live edge keeps moving
+  // ── Timeline: only shows what’s actually in the buffer ───────
+  const nowMs = nowTime.getTime();
+  const maxWindowMs = dvrWindowSeconds * 1000;
+  const elapsedMs = nowMs - streamStartRef.current;
+  // Cap to actual buffer size (chunks.length ≈ seconds recorded)
+  const bufferMs = Math.min(chunksRef.current.length * 1000, maxWindowMs);
+  const timelineMs = Math.max(
+    1000,
+    Math.min(elapsedMs, bufferMs || maxWindowMs),
+  );
+  const streamStartMs = nowMs - timelineMs; // left edge of visible timeline
+  const timelineSec = timelineMs / 1000;
+  timelineSecRef.current = timelineSec;
+
+  // Refresh "now" every 2s so timeline keeps growing
   useEffect(() => {
-    const id = setInterval(() => setNowTime(new Date()), 5000);
+    const id = setInterval(() => setNowTime(new Date()), 2000);
     return () => clearInterval(id);
   }, []);
 
-  // Track DVR current time from video.currentTime
+  // ═══════════════════════════════════════════════════════════
+  // WebRTC LIVE – always connects on mount
+  // ═══════════════════════════════════════════════════════════
   useEffect(() => {
-    if (mode !== "dvr") return;
-    const video = videoRef.current;
-    if (!video) return;
-    const onTimeUpdate = () => {
-      if (dvrClipStartRef.current) {
-        setDvrTime(
-          new Date(
-            dvrClipStartRef.current.getTime() + video.currentTime * 1000,
-          ),
-        );
-      }
-    };
-    video.addEventListener("timeupdate", onTimeUpdate);
-    return () => video.removeEventListener("timeupdate", onTimeUpdate);
-  }, [mode]);
-
-  // ── WebRTC LIVE ──────────────────────────────────────────
-  useEffect(() => {
-    if (mode !== "live") return;
-
-    const video = videoRef.current;
+    const video = liveVideoRef.current;
     if (video) {
-      video.src = "";
-      video.load();
+      video.srcObject = null;
       video.muted = true;
     }
     setLiveStatus("connecting");
     setErrorMsg("");
     let cancelled = false;
 
+    const scheduleReconnect = (delaySec: number) => {
+      if (cancelled) return;
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = setTimeout(() => {
+        if (!cancelled) {
+          retryCountRef.current += 1;
+          setRetryKey((k) => k + 1);
+        }
+      }, delaySec * 1000);
+    };
+
     async function connectWhep() {
       try {
         const pc = new RTCPeerConnection({
-          iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+          iceServers: [
+            {
+              urls: [
+                "stun:stun.l.google.com:19302",
+                "stun:stun1.l.google.com:19302",
+              ],
+            },
+            { urls: "stun:stun.cloudflare.com:3478" },
+          ],
+          iceTransportPolicy: "all",
+          bundlePolicy: "max-bundle",
+          rtcpMuxPolicy: "require",
         });
         pcRef.current = pc;
 
@@ -130,17 +162,70 @@ export default function CameraPlayer({
         pc.addTransceiver("audio", { direction: "recvonly" });
 
         pc.ontrack = (e) => {
-          if (cancelled || !videoRef.current) return;
-          if (e.streams[0]) videoRef.current.srcObject = e.streams[0];
+          if (cancelled || !liveVideoRef.current) return;
+          const stream = e.streams[0];
+          if (!stream) return;
+          liveVideoRef.current.srcObject = stream;
+
+          // Start in-memory recording for DVR
+          if (!mediaRecorderRef.current) {
+            chunksRef.current = [];
+            const mimeType = MediaRecorder.isTypeSupported(
+              "video/webm;codecs=vp8,opus",
+            )
+              ? "video/webm;codecs=vp8,opus"
+              : MediaRecorder.isTypeSupported("video/webm")
+                ? "video/webm"
+                : "";
+            try {
+              const mr = new MediaRecorder(
+                stream,
+                mimeType ? { mimeType } : {},
+              );
+              mediaRecorderRef.current = mr;
+              mr.ondataavailable = (ev) => {
+                if (ev.data && ev.data.size > 0) {
+                  if (!initChunkRef.current) {
+                    // Chunk đầu tiên luôn là WebM init segment – giữ riêng
+                    initChunkRef.current = ev.data;
+                  } else {
+                    chunksRef.current.push(ev.data);
+                    // Trim: chỉ giữ tối đa dvrWindowSeconds data chunks
+                    const maxChunks = Math.max(10, dvrWindowSeconds);
+                    if (chunksRef.current.length > maxChunks) {
+                      chunksRef.current = chunksRef.current.slice(
+                        chunksRef.current.length - maxChunks,
+                      );
+                    }
+                  }
+                }
+              };
+              mr.start(1000); // collect a chunk every 1 s
+            } catch (err) {
+              console.warn("MediaRecorder không khởi động được:", err);
+            }
+          }
         };
 
         pc.oniceconnectionstatechange = () => {
           if (cancelled) return;
           const s = pc.iceConnectionState;
-          if (s === "connected" || s === "completed") setLiveStatus("playing");
-          else if (s === "failed" || s === "disconnected" || s === "closed") {
+          if (s === "connected" || s === "completed") {
+            retryCountRef.current = 0;
+            if (reconnectTimerRef.current) {
+              clearTimeout(reconnectTimerRef.current);
+              reconnectTimerRef.current = null;
+            }
+            setLiveStatus("playing");
+          } else if (s === "disconnected") {
+            // Transient – give 5 s to self-heal before reconnecting
+            scheduleReconnect(5);
+          } else if (s === "failed") {
+            // Hard failure – reconnect immediately
+            scheduleReconnect(1);
+          } else if (s === "closed") {
             setLiveStatus("error");
-            setErrorMsg(`ICE: ${s}`);
+            setErrorMsg("ICE: closed");
           }
         };
 
@@ -185,92 +270,200 @@ export default function CameraPlayer({
 
     return () => {
       cancelled = true;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      if (mediaRecorderRef.current) {
+        try {
+          mediaRecorderRef.current.stop();
+        } catch {
+          /* ignore */
+        }
+        mediaRecorderRef.current = null;
+      }
       if (pcRef.current) {
         pcRef.current.close();
         pcRef.current = null;
       }
-      const v = videoRef.current;
+      const v = liveVideoRef.current;
       if (v) v.srcObject = null;
     };
-  }, [mode, streamUrl]);
+  }, [streamUrl, retryKey]);
 
-  // ── Seek to a time T → switch to DVR ────────────────────
-  const seekToTime = useCallback(
-    (t: Date) => {
-      if (!timelineStart) return;
+  // ── Cleanup MediaRecorder + blob URL on unmount ──────────
+  useEffect(() => {
+    return () => {
+      if (mediaRecorderRef.current) {
+        try {
+          mediaRecorderRef.current.stop();
+        } catch {
+          /* ignore */
+        }
+        mediaRecorderRef.current = null;
+      }
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
+      chunksRef.current = [];
+      initChunkRef.current = null;
+    };
+  }, []);
 
-      // Find segment that contains t
-      let target = sortedSegs.find((seg) => {
-        const s = new Date(seg.start).getTime();
-        const e = s + seg.duration * 1000;
-        return t.getTime() >= s && t.getTime() < e;
+  // ── Frozen stream detector: reconnect if no video progress for 20s in live mode ──
+  useEffect(() => {
+    if (liveStatus !== "playing") return;
+    const video = liveVideoRef.current;
+    if (!video) return;
+
+    let lastTime = -1;
+    const id = setInterval(() => {
+      if (modeRef.current !== "live") return;
+      const t = video.currentTime;
+      if (lastTime >= 0 && t === lastTime && !video.paused) {
+        // Video không tiến sau 20s → stream bị đóng băng, reconnect
+        retryCountRef.current += 1;
+        setRetryKey((k) => k + 1);
+      }
+      lastTime = t;
+    }, 20_000);
+
+    return () => clearInterval(id);
+  }, [liveStatus]);
+
+  // Track DVR offset: blobDuration - currentTime
+  useEffect(() => {
+    if (mode !== "dvr") return;
+    const video = dvrVideoRef.current;
+    if (!video) return;
+
+    const onTimeUpdate = () => {
+      const blobDuration = timelineSecRef.current;
+      const offset = Math.max(0, blobDuration - video.currentTime);
+      setDvrOffsetFromLive(offset);
+    };
+
+    video.addEventListener("timeupdate", onTimeUpdate);
+    return () => video.removeEventListener("timeupdate", onTimeUpdate);
+  }, [mode]);
+
+  // ── Seek within the in-memory blob to an offset from live edge ──
+  // onDone is called once the seek (and any duration-discovery seek) finishes.
+  const seekDvr = useCallback((offsetFromLive: number, onDone?: () => void) => {
+    const video = dvrVideoRef.current;
+    if (!video) {
+      onDone?.();
+      return;
+    }
+    // Dùng số chunk thực tế làm duration, không dùng timelineSec
+    const blobDurationSec = chunksRef.current.length;
+    const targetTime = Math.max(0, blobDurationSec - offsetFromLive);
+
+    // Seek to targetTime and fire onDone after seeked completes
+    const doSeekTo = (t: number) => {
+      if (onDone) {
+        const onSeeked = () => {
+          video.removeEventListener("seeked", onSeeked);
+          onDone();
+        };
+        video.addEventListener("seeked", onSeeked);
+      }
+      video.currentTime = t;
+    };
+
+    if (isFinite(video.duration) && video.duration > 0) {
+      doSeekTo(Math.min(targetTime, video.duration));
+    } else {
+      // WebM from MediaRecorder lacks duration metadata (duration = Infinity).
+      // Seek to 9999 first so the browser indexes the stream, then seek to target.
+      const onFirst = () => {
+        video.removeEventListener("seeked", onFirst);
+        doSeekTo(targetTime);
+      };
+      video.addEventListener("seeked", onFirst);
+      video.currentTime = 9999;
+    }
+  }, []);
+
+  // ── Switch to DVR — snapshot current chunks into a Blob URL ──
+  const switchToDvr = useCallback(
+    (offsetFromLive: number) => {
+      const video = dvrVideoRef.current;
+      if (!video || chunksRef.current.length === 0 || !initChunkRef.current)
+        return;
+
+      // Revoke previous blob to avoid memory leaks
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
+
+      const mimeType = mediaRecorderRef.current?.mimeType || "video/webm";
+      // Luôn gồm init chunk đầu tiên để blob có WebM header hợp lệ
+      const blob = new Blob([initChunkRef.current, ...chunksRef.current], {
+        type: mimeType,
       });
+      const url = URL.createObjectURL(blob);
+      objectUrlRef.current = url;
 
-      // If not in any segment, snap to the nearest segment start
-      if (!target) {
-        target = sortedSegs.reduce((prev, cur) => {
-          const pd = Math.abs(t.getTime() - new Date(prev.start).getTime());
-          const cd = Math.abs(t.getTime() - new Date(cur.start).getTime());
-          return cd < pd ? cur : prev;
-        });
-        t = new Date(target.start);
-      }
+      setDvrOffsetFromLive(offsetFromLive);
+      setModeSync("dvr");
 
-      // Close existing WebRTC
-      if (pcRef.current) {
-        pcRef.current.close();
-        pcRef.current = null;
-      }
-
-      const video = videoRef.current;
-      if (!video) return;
-
-      // Remaining seconds in this segment from t
-      const segEnd = new Date(target.start).getTime() + target.duration * 1000;
-      const remaining = Math.max(60, Math.ceil((segEnd - t.getTime()) / 1000));
-
-      const url =
-        `${playbackBaseUrl}/get` +
-        `?path=${encodeURIComponent(cameraId)}` +
-        `&start=${encodeURIComponent(t.toISOString())}` +
-        `&duration=${remaining}` +
-        `&token=${playbackToken}`;
-
-      dvrClipStartRef.current = t;
-      video.srcObject = null;
-      video.muted = false;
       video.src = url;
+      video.muted = false;
+      video.onloadedmetadata = () => {
+        video.onloadedmetadata = null;
+        // Only play AFTER the seek fully completes to avoid playing from position 0
+        seekDvr(offsetFromLive, () => {
+          video.play().catch(() => {});
+        });
+      };
       video.load();
-      video.play().catch(() => {});
-
-      setMode("dvr");
-      setDvrTime(t);
     },
-    [sortedSegs, playbackBaseUrl, cameraId, playbackToken, timelineStart],
+    [seekDvr],
   );
 
-  // ── Go back to LIVE ──────────────────────────────────────
+  // ── Go back to LIVE — release blob URL and clear dvr video ──
   const goLive = useCallback(() => {
-    setMode("live");
-    setDvrTime(null);
-    dvrClipStartRef.current = null;
+    const dvrVideo = dvrVideoRef.current;
+    if (dvrVideo) {
+      dvrVideo.pause();
+      dvrVideo.onloadedmetadata = null;
+      dvrVideo.src = "";
+      dvrVideo.load();
+    }
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
+    setDvrOffsetFromLive(0);
+    setModeSync("live");
   }, []);
 
   // ── Timeline helpers ─────────────────────────────────────
-  const timeToPercent = useCallback(
-    (t: Date) => {
-      if (!timelineStart || timelineMs <= 0) return 100;
-      return ((t.getTime() - timelineStart.getTime()) / timelineMs) * 100;
+  // pct 0% = streamStart (left), pct 100% = now/LIVE (right)
+
+  const percentToOffset = useCallback(
+    (pct: number): number => {
+      return (1 - pct / 100) * timelineSec;
     },
-    [timelineStart, timelineMs],
+    [timelineSec],
+  );
+
+  const offsetToPercent = useCallback(
+    (offsetSec: number) => {
+      if (timelineSec <= 0) return 100;
+      return Math.max(0, Math.min(100, 100 * (1 - offsetSec / timelineSec)));
+    },
+    [timelineSec],
   );
 
   const percentToTime = useCallback(
-    (pct: number): Date | null => {
-      if (!timelineStart || timelineMs <= 0) return null;
-      return new Date(timelineStart.getTime() + (pct / 100) * timelineMs);
+    (pct: number): Date => {
+      return new Date(streamStartMs + (pct / 100) * timelineMs);
     },
-    [timelineStart, timelineMs],
+    [streamStartMs, timelineMs],
   );
 
   const clientXToPercent = useCallback((clientX: number) => {
@@ -283,22 +476,22 @@ export default function CameraPlayer({
     );
   }, []);
 
-  // ── Pointer events (mouse + touch) ──────────────────────
+  // ── Pointer events ──────────────────────────────────────
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
-      if (!timelineStart) return;
       timelineRef.current?.setPointerCapture(e.pointerId);
       setIsDragging(true);
       setDragPercent(clientXToPercent(e.clientX));
       e.preventDefault();
     },
-    [timelineStart, clientXToPercent],
+    [clientXToPercent],
   );
 
   const handlePointerMove = useCallback(
     (e: React.PointerEvent) => {
-      if (!isDragging) return;
-      setDragPercent(clientXToPercent(e.clientX));
+      if (isDragging) {
+        setDragPercent(clientXToPercent(e.clientX));
+      }
     },
     [isDragging, clientXToPercent],
   );
@@ -309,15 +502,45 @@ export default function CameraPlayer({
       setIsDragging(false);
       const pct = clientXToPercent(e.clientX);
       setDragPercent(null);
-      if (pct >= 98) {
+
+      const offsetFromLive = percentToOffset(pct);
+
+      if (offsetFromLive <= 3) {
+        // Close to live edge → go live
         goLive();
+      } else if (modeRef.current === "dvr") {
+        // Already in DVR: just seek within the existing blob, no reload
+        seekDvr(offsetFromLive);
       } else {
-        const t = percentToTime(pct);
-        if (t) seekToTime(t);
+        // First time switching live → DVR: snapshot chunks and load blob
+        switchToDvr(offsetFromLive);
       }
     },
-    [isDragging, clientXToPercent, percentToTime, seekToTime, goLive],
+    [
+      isDragging,
+      clientXToPercent,
+      percentToOffset,
+      goLive,
+      seekDvr,
+      switchToDvr,
+    ],
   );
+
+  // Hover tracking
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!isDragging) {
+        setHoverPercent(clientXToPercent(e.clientX));
+      }
+    },
+    [isDragging, clientXToPercent],
+  );
+
+  const handleMouseEnter = useCallback(() => setIsHoveringTrack(true), []);
+  const handleMouseLeave = useCallback(() => {
+    setIsHoveringTrack(false);
+    setHoverPercent(null);
+  }, []);
 
   // ── Playhead position ────────────────────────────────────
   const playheadPct =
@@ -325,157 +548,264 @@ export default function CameraPlayer({
       ? dragPercent
       : mode === "live"
         ? 100
-        : dvrTime
-          ? timeToPercent(dvrTime)
-          : 100;
+        : offsetToPercent(dvrOffsetFromLive);
 
-  // ── Time labels on track ─────────────────────────────────
-  const getHourLabels = (): { t: Date; pct: number }[] => {
-    if (!timelineStart || timelineMs <= 0) return [];
-    const labels: { t: Date; pct: number }[] = [];
-    const hourMs = 3_600_000;
-    let cur = new Date(Math.ceil(timelineStart.getTime() / hourMs) * hourMs);
-    while (cur.getTime() < timelineEnd.getTime() - hourMs * 0.3) {
-      const pct =
-        ((cur.getTime() - timelineStart.getTime()) / timelineMs) * 100;
-      if (pct > 2 && pct < 96) labels.push({ t: cur, pct });
-      cur = new Date(cur.getTime() + hourMs);
+  // ── Time labels on timeline ──────────────────────────────
+  const getTimeLabels = (): { label: string; pct: number }[] => {
+    if (timelineSec <= 5) return []; // too short to show labels
+    const labels: { label: string; pct: number }[] = [];
+
+    // Adaptive intervals based on how long user has been watching
+    let intervalSec: number;
+    if (timelineSec <= 60) intervalSec = 10;
+    else if (timelineSec <= 300) intervalSec = 30;
+    else if (timelineSec <= 600) intervalSec = 60;
+    else if (timelineSec <= 1800) intervalSec = 300;
+    else intervalSec = 600;
+
+    for (
+      let offset = intervalSec;
+      offset < timelineSec;
+      offset += intervalSec
+    ) {
+      const pct = 100 * (1 - offset / timelineSec);
+      if (pct > 5 && pct < 92) {
+        const t = new Date(nowMs - offset * 1000);
+        labels.push({ label: fmtTime(t), pct });
+      }
     }
     return labels;
   };
 
-  const hourLabels = getHourLabels();
+  const timeLabels = getTimeLabels();
+  const timelineStartTime = new Date(streamStartMs);
+
+  // Timeline is interactive once we have enough recorded chunks
+  const canSeek = timelineSec > 5 && chunksRef.current.length > 0;
 
   return (
-    <div className={styles.container}>
+    <div className={styles.container} id="camera-player">
       {/* ── Header ─────────────────────────────────────────── */}
       <div className={styles.header}>
         <div className={styles.info}>
-          {mode === "live" ? (
-            <span className={`${styles.dot} ${styles[liveStatus]}`} />
-          ) : (
-            <span className={styles.dvrIcon}>⏪</span>
-          )}
-          <span className={styles.name}>{cameraName}</span>
-          <span className={styles.statusLabel}>
-            {mode === "live"
-              ? liveStatus === "connecting"
-                ? "⏳ Đang kết nối..."
-                : liveStatus === "playing"
-                  ? "🔴 LIVE"
-                  : "⚠️ Lỗi kết nối"
-              : dvrTime
-                ? `📼 ${fmtDateTime(dvrTime)}`
-                : "📼 Đang tải..."}
-          </span>
+          <div className={styles.cameraInfo}>
+            <span className={styles.cameraIcon}>📹</span>
+            <span className={styles.name}>{cameraName}</span>
+          </div>
+          <div
+            className={`${styles.statusChip} ${mode === "live" ? styles.statusChipLive : styles.statusChipDvr}`}
+          >
+            {mode === "live" ? (
+              <>
+                <span className={`${styles.statusDot} ${styles[liveStatus]}`} />
+                <span className={styles.statusText}>
+                  {liveStatus === "connecting"
+                    ? "Đang kết nối..."
+                    : liveStatus === "playing"
+                      ? "LIVE"
+                      : "Lỗi"}
+                </span>
+              </>
+            ) : (
+              <>
+                <span className={styles.dvrDot} />
+                <span className={styles.statusText}>
+                  {relativeLabel(dvrOffsetFromLive)}
+                </span>
+              </>
+            )}
+          </div>
         </div>
         <div className={styles.headerActions}>
           {mode === "dvr" && (
-            <button className={styles.goLiveBtn} onClick={goLive}>
-              ⏩ Về LIVE
+            <button
+              className={styles.goLiveBtn}
+              onClick={goLive}
+              title="Về xem trực tiếp"
+            >
+              <span className={styles.goLiveDot} />
+              Về LIVE
             </button>
           )}
-          <button className={styles.closeBtn} onClick={onClose}>
-            ✕ Đóng
+          <button className={styles.closeBtn} onClick={onClose} title="Đóng">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path
+                d="M1 1L13 13M1 13L13 1"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+            </svg>
           </button>
         </div>
       </div>
 
       {/* ── Error ──────────────────────────────────────────── */}
-      {mode === "live" && liveStatus === "error" && (
+      {liveStatus === "error" && mode === "live" && (
         <div className={styles.errorBar} role="alert">
-          ⚠️ {errorMsg}
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 10.5a.75.75 0 110-1.5.75.75 0 010 1.5zM8.75 4.75v4a.75.75 0 01-1.5 0v-4a.75.75 0 011.5 0z" />
+          </svg>
+          <span>{errorMsg}</span>
         </div>
       )}
 
-      {/* ── Video ──────────────────────────────────────────── */}
+      {/* ── Video Area ─────────────────────────────────────── */}
       <div className={styles.videoWrapper}>
+        {/* Loading overlay — only when WebRTC is connecting in live mode */}
         {mode === "live" && liveStatus === "connecting" && (
           <div className={styles.overlay}>
             <div className={styles.spinner} />
-            <p>Đang thiết lập luồng WebRTC...</p>
+            <p>
+              {retryKey > 0
+                ? `Đang kết nối lại... (lần ${retryKey})`
+                : "Đang thiết lập luồng WebRTC..."}
+            </p>
           </div>
         )}
+
+        {/* WebRTC live video */}
         <video
-          ref={videoRef}
+          ref={liveVideoRef}
           autoPlay
-          controls
+          muted
           playsInline
-          className={styles.video}
+          className={`${styles.video} ${mode !== "live" ? styles.videoHidden : ""}`}
         />
+
+        {/* DVR playback video (in-memory blob) */}
+        <video
+          ref={dvrVideoRef}
+          playsInline
+          className={`${styles.video} ${mode !== "dvr" ? styles.videoHidden : ""}`}
+        />
+
+        {/* DVR time badge */}
+        {mode === "dvr" && dvrOffsetFromLive > 0 && (
+          <div className={styles.dvrTimeBadge}>
+            <span className={styles.dvrTimeBadgeIcon}>⏪</span>
+            {fmtDateTime(new Date(Date.now() - dvrOffsetFromLive * 1000))}
+          </div>
+        )}
       </div>
 
-      {/* ── DVR Timeline (only when recordings exist) ─────── */}
-      {sortedSegs.length > 0 && timelineStart && (
-        <div className={styles.dvrBar}>
-          {/* Time stamp labels */}
-          <div className={styles.labelRow}>
-            <span className={styles.edgeLabel}>{fmtTime(timelineStart)}</span>
-            {hourLabels.map(({ t, pct }) => (
+      {/* ── YouTube-style Timeline ─────────────────────────── */}
+      <div
+        className={`${styles.timelineContainer} ${isDragging ? styles.timelineDragging : ""}`}
+      >
+        {/* Hover tooltip */}
+        {(hoverPercent !== null || dragPercent !== null) && canSeek && (
+          <div
+            className={styles.timeTooltip}
+            style={{
+              left: `${Math.min(94, Math.max(6, dragPercent ?? hoverPercent ?? 0))}%`,
+            }}
+          >
+            <div className={styles.tooltipContent}>
+              {(() => {
+                const pct = dragPercent ?? hoverPercent ?? 0;
+                if (pct >= 98) return "LIVE";
+                return fmtTimeWithSec(percentToTime(pct));
+              })()}
+            </div>
+            {(() => {
+              const pct = dragPercent ?? hoverPercent ?? 0;
+              if (pct >= 98) return null;
+              const offset = percentToOffset(pct);
+              return (
+                <div className={styles.tooltipDate}>
+                  {relativeLabel(offset)}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* Track area */}
+        <div className={styles.trackArea}>
+          {/* Time labels */}
+          <div className={styles.timeLabels}>
+            <span className={styles.startLabel}>
+              {fmtTime(timelineStartTime)}
+            </span>
+            {timeLabels.map(({ label, pct }) => (
               <span
-                key={t.toISOString()}
+                key={`${label}-${pct.toFixed(1)}`}
                 className={styles.midLabel}
                 style={{ left: `${pct}%` }}
               >
-                {fmtTime(t)}
+                {label}
               </span>
             ))}
-            <span className={`${styles.edgeLabel} ${styles.liveEdge}`}>
-              LIVE
-            </span>
+            <span className={styles.endLabel}>Bây giờ</span>
           </div>
 
-          {/* Track */}
+          {/* The scrubbing track */}
           <div
             ref={timelineRef}
-            className={`${styles.track} ${isDragging ? styles.trackDragging : ""}`}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
+            className={`${styles.track} ${isHoveringTrack || isDragging ? styles.trackExpanded : ""} ${!canSeek ? styles.trackDisabled : ""}`}
+            onPointerDown={canSeek ? handlePointerDown : undefined}
+            onPointerMove={canSeek ? handlePointerMove : undefined}
+            onPointerUp={canSeek ? handlePointerUp : undefined}
+            onMouseMove={canSeek ? handleMouseMove : undefined}
+            onMouseEnter={canSeek ? handleMouseEnter : undefined}
+            onMouseLeave={canSeek ? handleMouseLeave : undefined}
           >
-            {/* Segment blocks (filled blue = recorded) */}
-            {sortedSegs.map((seg) => {
-              const left = timeToPercent(new Date(seg.start));
-              const width = ((seg.duration * 1000) / timelineMs) * 100;
-              return (
-                <div
-                  key={seg.start}
-                  className={styles.segBlock}
-                  style={{
-                    left: `${left}%`,
-                    width: `${Math.max(0.3, width)}%`,
-                  }}
-                />
-              );
-            })}
-
-            {/* Playhead handle */}
+            {/* Progress fill */}
             <div
-              className={`${styles.playhead} ${isDragging ? styles.playheadDragging : ""} ${mode === "live" ? styles.playheadLive : ""}`}
-              style={{ left: `${Math.min(100, Math.max(0, playheadPct))}%` }}
-            >
-              {mode === "live" && <span className={styles.liveTag}>LIVE</span>}
-            </div>
-          </div>
+              className={`${styles.progressPlayed} ${mode === "dvr" ? styles.progressDvr : ""}`}
+              style={{ width: `${Math.min(100, Math.max(0, playheadPct))}%` }}
+            />
 
-          {/* Current time / status row */}
-          <div className={styles.timeRow}>
-            {dragPercent !== null && percentToTime(dragPercent) ? (
-              <span className={styles.seekPreview}>
-                🔍 {fmtDateTime(percentToTime(dragPercent)!)}
+            {/* Hover fill */}
+            {hoverPercent !== null && !isDragging && canSeek && (
+              <div
+                className={styles.hoverFill}
+                style={{ width: `${hoverPercent}%` }}
+              />
+            )}
+
+            {/* Playhead dot */}
+            <div
+              className={`${styles.playhead} ${isDragging ? styles.playheadDragging : ""} ${isHoveringTrack || isDragging ? styles.playheadVisible : ""} ${mode === "live" ? styles.playheadLive : styles.playheadDvr}`}
+              style={{ left: `${Math.min(100, Math.max(0, playheadPct))}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Bottom status row */}
+        <div className={styles.bottomRow}>
+          <div className={styles.bottomLeft}>
+            {mode === "dvr" && dvrOffsetFromLive > 0 ? (
+              <span className={styles.dvrLabel}>
+                📼 Đang xem:{" "}
+                {fmtDateTime(new Date(Date.now() - dvrOffsetFromLive * 1000))}
               </span>
-            ) : mode === "dvr" && dvrTime ? (
-              <span className={styles.dvrTimeText}>
-                📼 Đang xem: {fmtDateTime(dvrTime)}
+            ) : canSeek ? (
+              <span className={styles.liveHint}>Kéo timeline để xem lại</span>
+            ) : (
+              <span className={styles.liveHint}>⏳ Đợi thêm vài giây...</span>
+            )}
+          </div>
+          <div className={styles.bottomRight}>
+            {mode === "live" ? (
+              <span className={styles.livePill}>
+                <span className={styles.livePillDot} />
+                TRỰC TIẾP
               </span>
             ) : (
-              <span className={styles.liveTimeText}>
-                🔴 Đang phát LIVE &nbsp;·&nbsp; Kéo thanh để xem lại
-              </span>
+              <button
+                className={styles.goLivePill}
+                onClick={goLive}
+                title="Về xem trực tiếp"
+              >
+                <span className={styles.goLivePillDot} />
+                Về LIVE
+              </button>
             )}
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

@@ -1,38 +1,62 @@
-import { Controller, Get, Param } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  Patch,
+  Post,
+} from "@nestjs/common";
 import { CamerasService } from "./cameras.service";
 
 @Controller("api/cameras")
 export class CamerasController {
   constructor(private readonly camerasService: CamerasService) {}
 
-  /**
-   * GET /api/cameras
-   * Trả về danh sách camera cho Frontend – CHỈ id và name,
-   * không bao giờ lộ IP, username, password.
-   */
+  /** GET /api/cameras – danh sách camera (chỉ id + name) */
   @Get()
   getCameras() {
     return this.camerasService.getCameras();
   }
 
-  /**
-   * GET /api/cameras/:id/live
-   * Cấu hình luồng camera lên MediaMTX rồi trả về WHEP URL
-   * để Frontend kết nối WebRTC trực tiếp.
-   */
+  /** POST /api/cameras – thêm camera mới */
+  @Post()
+  createCamera(@Body() body: { name: string; source: string }) {
+    return this.camerasService.createCamera(body.name, body.source);
+  }
+
+  /** GET /api/cameras/:id/live – WHEP URL cho live stream */
   @Get(":id/live")
   getLiveStream(@Param("id") id: string) {
     return this.camerasService.getLiveStream(id);
   }
 
-  /**
-   * GET /api/cameras/:id/recordings
-   * Trả về danh sách các đoạn video đã ghi cho camera.
-   * Mỗi segment kèm pre-signed URL để FE phát trực tiếp từ
-   * MediaMTX Playback Server (:9996/get?path=...&start=...&duration=...)
-   */
+  /** GET /api/cameras/:id/recordings – danh sách bản ghi */
   @Get(":id/recordings")
   getRecordings(@Param("id") id: string) {
     return this.camerasService.getRecordings(id);
+  }
+
+  /** GET /api/cameras/:id – chi tiết camera (kèm source để edit) */
+  @Get(":id")
+  getCamera(@Param("id") id: string) {
+    return this.camerasService.getCamera(id);
+  }
+
+  /** PATCH /api/cameras/:id – cập nhật camera */
+  @Patch(":id")
+  updateCamera(
+    @Param("id") id: string,
+    @Body() body: { name: string; source: string },
+  ) {
+    return this.camerasService.updateCamera(id, body.name, body.source);
+  }
+
+  /** DELETE /api/cameras/:id – xóa camera */
+  @Delete(":id")
+  @HttpCode(204)
+  deleteCamera(@Param("id") id: string) {
+    return this.camerasService.deleteCamera(id);
   }
 }

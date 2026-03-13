@@ -7,14 +7,14 @@ import {
 } from "@nestjs/common";
 import axios from "axios";
 import * as jwt from "jsonwebtoken";
-import { CAMERA_CONFIG } from "./cameras.data";
+import { cameraStore } from "./cameras.data";
 
 export interface RecordingSegment {
-  start: string;        // RFC3339 timestamp
-  duration: number;     // seconds
+  start: string; // RFC3339 timestamp
+  duration: number; // seconds
   durationLabel: string; // human-readable, e.g. "1h 23ph"
-  label: string;        // formatted start time
-  url: string;          // pre-signed playback URL
+  label: string; // formatted start time
+  url: string; // pre-signed playback URL
 }
 
 @Injectable()
@@ -28,8 +28,21 @@ export class CamerasService {
     process.env.MEDIAMTX_WEBRTC_PORT || "8889";
   private readonly mediamtxPlaybackPort =
     process.env.MEDIAMTX_PLAYBACK_PORT || "9996";
+  private readonly mediamtxHlsPort = process.env.MEDIAMTX_HLS_PORT || "8888";
+  private readonly mediamtxApiUser =
+    process.env.MEDIAMTX_API_USER || "admin_user";
+  private readonly mediamtxApiPass =
+    process.env.MEDIAMTX_API_PASS || "admin_password";
+  private readonly dvrWindowSeconds = parseInt(
+    process.env.DVR_WINDOW_SECONDS || "300",
+    10,
+  );
   private readonly jwtSecret =
     process.env.JWT_SECRET || "demo-secret-change-in-production";
+
+  private get apiAuth() {
+    return { username: this.mediamtxApiUser, password: this.mediamtxApiPass };
+  }
 
   private get apiBaseUrl(): string {
     return `http://${this.mediamtxHost}:${this.mediamtxApiPort}`;
@@ -40,20 +53,22 @@ export class CamerasService {
    * Tuyệt đối không trả về IP, username, password hay RTSP URL.
    */
   getCameras() {
-    return CAMERA_CONFIG.cameras.map(({ id, name }) => ({
-      id,
-      name,
-    }));
+    return cameraStore.getAll().map(({ id, name }) => ({ id, name }));
   }
 
   /**
    * Cốt lõi của hệ thống:
    * 1. Lấy thông tin camera từ mock DB (bao gồm video.source – RTSP URL đầy đủ)
    * 2. Gọi REST API MediaMTX để tạo/cập nhật path On-Demand
-   * 3. Trả về WHEP URL để Frontend kết nối WebRTC
+   * 3. Trả về WHEP URL (live) + HLS URL (DVR) + token
    */
-  async getLiveStream(id: string): Promise<{ streamUrl: string }> {
-    const camera = CAMERA_CONFIG.cameras.find((c) => c.id === id);
+  async getLiveStream(id: string): Promise<{
+    streamUrl: string;
+    hlsUrl: string;
+    token: string;
+    dvrWindowSeconds: number;
+  }> {
+    const camera = cameraStore.findById(id);
     if (!camera) {
       throw new NotFoundException(
         `Camera "${id}" không tồn tại trong hệ thống`,
@@ -66,18 +81,29 @@ export class CamerasService {
     // Cấu hình path trên MediaMTX (On-Demand + Passthrough)
     await this.configureMediaMTXPath(camera.id, rtspUrl);
 
-    // Sinh JWT token có thời hạn 1 giờ, gắn vào WHEP URL
-    // MediaMTX sẽ gọi callback /api/auth/mediamtx để validate token này
-    const token = jwt.sign(
-      { cameraId: camera.id },
-      this.jwtSecret,
-      { expiresIn: "1h" },
-    );
+    // Sinh JWT token có thời hạn 24 giờ
+    // Dùng chung cho cả WebRTC WHEP và HLS
+    const token = jwt.sign({ cameraId: camera.id }, this.jwtSecret, {
+      expiresIn: "24h",
+    });
 
+    // WHEP URL cho WebRTC live
     const streamUrl = `http://${this.mediamtxHost}:${this.mediamtxWebRTCPort}/${camera.id}/whep?token=${token}`;
 
-    this.logger.log(`[${camera.id}] WHEP URL sẵn sàng: ${streamUrl}`);
-    return { streamUrl };
+    // HLS URL cho DVR/playback
+    // Frontend sẽ dùng hls.js để load và seek trong DVR window
+    const hlsUrl = `http://${this.mediamtxHost}:${this.mediamtxHlsPort}/${camera.id}/index.m3u8`;
+
+    this.logger.log(`[${camera.id}] WHEP URL: ${streamUrl}`);
+    this.logger.log(`[${camera.id}] HLS URL: ${hlsUrl}?token=...`);
+    this.logger.log(`[${camera.id}] DVR window: ${this.dvrWindowSeconds}s`);
+
+    return {
+      streamUrl,
+      hlsUrl,
+      token,
+      dvrWindowSeconds: this.dvrWindowSeconds,
+    };
   }
 
   /**
@@ -100,14 +126,13 @@ export class CamerasService {
       // Thời gian chờ nguồn RTSP sẵn sàng (FFmpeg có thể chưa push kịp)
       sourceOnDemandStartTimeout: "30s",
       sourceOnDemandCloseAfter: "10s",
-      // Bật ghi hình – file được lưu theo recordPath trong mediamtx.yml
-      record: true,
     };
 
     try {
       await axios.post(
         `${this.apiBaseUrl}/v3/config/paths/add/${pathId}`,
         payload,
+        { auth: this.apiAuth },
       );
       this.logger.log(`[MediaMTX] Path "${pathId}" đã được tạo mới`);
     } catch (error: any) {
@@ -122,6 +147,7 @@ export class CamerasService {
           await axios.patch(
             `${this.apiBaseUrl}/v3/config/paths/patch/${pathId}`,
             payload,
+            { auth: this.apiAuth },
           );
           this.logger.log(`[MediaMTX] Path "${pathId}" đã được cập nhật`);
         } catch (patchErr: any) {
@@ -150,26 +176,28 @@ export class CamerasService {
    * Lấy danh sách các đoạn video đã ghi cho camera.
    * Gọi Playback API của MediaMTX: GET :9996/list?path={id}
    * Trả về mảng segment kèm pre-signed URL để FE phát trực tiếp.
+   * (Giữ lại cho backward compatibility / tính năng browse recordings riêng)
    */
-  async getRecordings(
-    id: string,
-  ): Promise<{ recordings: RecordingSegment[]; playbackBaseUrl: string; token: string }> {
-    const camera = CAMERA_CONFIG.cameras.find((c) => c.id === id);
+  async getRecordings(id: string): Promise<{
+    recordings: RecordingSegment[];
+    playbackBaseUrl: string;
+    token: string;
+  }> {
+    const camera = cameraStore.findById(id);
     if (!camera) {
       throw new NotFoundException(`Camera "${id}" không tồn tại`);
     }
 
-    const token = jwt.sign(
-      { cameraId: id },
-      this.jwtSecret,
-      { expiresIn: "1h" },
-    );
+    const token = jwt.sign({ cameraId: id }, this.jwtSecret, {
+      expiresIn: "24h",
+    });
 
     const playbackBase = `http://${this.mediamtxHost}:${this.mediamtxPlaybackPort}`;
 
     try {
       const res = await axios.get(`${playbackBase}/list`, {
         params: { path: id, token },
+        auth: this.apiAuth,
       });
 
       const raw: { start: string; duration: number }[] = res.data ?? [];
@@ -190,11 +218,7 @@ export class CamerasService {
         const h = Math.floor(totalSec / 3600);
         const m = Math.floor((totalSec % 3600) / 60);
         const s = totalSec % 60;
-        const durationLabel = [
-          h ? `${h}h` : "",
-          m ? `${m}ph` : "",
-          `${s}s`,
-        ]
+        const durationLabel = [h ? `${h}h` : "", m ? `${m}ph` : "", `${s}s`]
           .filter(Boolean)
           .join(" ");
 
@@ -204,7 +228,13 @@ export class CamerasService {
           `&duration=${Math.ceil(seg.duration)}` +
           `&token=${token}`;
 
-        return { start: seg.start, duration: seg.duration, durationLabel, label, url };
+        return {
+          start: seg.start,
+          duration: seg.duration,
+          durationLabel,
+          label,
+          url,
+        };
       });
 
       // Sắp xếp mới nhất lên đầu
@@ -217,11 +247,46 @@ export class CamerasService {
       if (err?.response?.status === 404) {
         return { recordings: [], playbackBaseUrl: playbackBase, token };
       }
-      this.logger.error(`[Playback] Lỗi lấy recordings cho "${id}": ${err.message}`);
+      this.logger.error(
+        `[Playback] Lỗi lấy recordings cho "${id}": ${err.message}`,
+      );
       throw new HttpException(
         "Không thể lấy danh sách recording",
         HttpStatus.BAD_GATEWAY,
       );
     }
+  }
+
+  /** Trả về thông tin camera kèm source (dùng cho form chỉnh sửa) */
+  getCamera(id: string) {
+    const camera = cameraStore.findById(id);
+    if (!camera) throw new NotFoundException(`Camera "${id}" không tồn tại`);
+    return { id: camera.id, name: camera.name, source: camera.video.source };
+  }
+
+  /** Tạo camera mới */
+  createCamera(name: string, source: string) {
+    if (!name?.trim())
+      throw new HttpException("Thiếu tên camera", HttpStatus.BAD_REQUEST);
+    if (!source?.trim())
+      throw new HttpException("Thiếu địa chỉ RTSP", HttpStatus.BAD_REQUEST);
+    return cameraStore.create(name, source);
+  }
+
+  /** Cập nhật camera */
+  updateCamera(id: string, name: string, source: string) {
+    if (!name?.trim())
+      throw new HttpException("Thiếu tên camera", HttpStatus.BAD_REQUEST);
+    if (!source?.trim())
+      throw new HttpException("Thiếu địa chỉ RTSP", HttpStatus.BAD_REQUEST);
+    const updated = cameraStore.update(id, name, source);
+    if (!updated) throw new NotFoundException(`Camera "${id}" không tồn tại`);
+    return updated;
+  }
+
+  /** Xóa camera */
+  deleteCamera(id: string) {
+    const ok = cameraStore.remove(id);
+    if (!ok) throw new NotFoundException(`Camera "${id}" không tồn tại`);
   }
 }
