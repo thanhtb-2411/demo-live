@@ -1,0 +1,23 @@
+version: "3.8"
+
+# ============================================================
+# Live Stream Camera System: MediaMTX + NestJS Backend + Next.js Frontend
+# Sử dụng network_mode: host để WebRTC ICE candidates hoạt động
+# đúng trên Linux (không cần cấu hình thêm webrtcAdditionalHosts).
+# ============================================================
+
+services:
+  # ----------------------------------------------------------
+  # 1. MediaMTX – Media Server (WebRTC WHEP + REST API)
+  # ----------------------------------------------------------
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: mediamtx
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+      - recordings:/recordings
+
+volumes:
+  recordings:

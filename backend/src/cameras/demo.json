@@ -1,0 +1,36 @@
+{
+  "nvr": { "ip": "192.168.10.1", "password": "8TuwdmlF", "username": "admin" },
+  "cameras": [
+    {
+      "id": "CTR01",
+      "video": {
+        "source": "rtsp://admin:admin123456@192.168.10.1/LiveMedia/ch1/Media1",
+        "options": { "hwaccel": "auto", "rtsp_transport": "tcp" }
+      },
+      "parking_lot": {
+        "parking_spaces": [
+          [
+            [1, 36],
+            [123, 36],
+            [123, 198],
+            [1, 198]
+          ],
+          [
+            [123, 20],
+            [242, 20],
+            [242, 193],
+            [123, 193]
+          ],
+          [
+            [221, 17],
+            [354, 17],
+            [354, 199],
+            [221, 199]
+          ]
+        ],
+        "camera_position": "front"
+      }
+    }
+  ],
+  "format_version": "v1.0.0"
+}

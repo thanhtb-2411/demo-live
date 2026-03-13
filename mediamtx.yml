@@ -1,0 +1,64 @@
+###############################################################
+# MediaMTX – Cấu hình tối thiểu cho hệ thống Live Stream Camera
+# WebRTC (WHEP) + REST API động
+###############################################################
+
+# Mức độ log: error | warn | info | debug
+logLevel: info
+logDestinations: [stdout]
+
+###############################################################
+# Authentication – External callback về NestJS Backend
+# MediaMTX gọi POST http://127.0.0.1:3001/api/auth/mediamtx
+# mỗi khi có kết nối mới. Backend validate JWT token trong
+# query string (?token=...) trước khi cho phép xem stream.
+###############################################################
+externalAuthenticationURL: http://127.0.0.1:3001/api/auth/mediamtx
+
+###############################################################
+# REST API – Backend NestJS sẽ gọi API này để cấu hình paths
+# động theo từng camera lấy từ Database.
+###############################################################
+api: yes
+apiAddress: :9997
+
+###############################################################
+# Playback Server – Cho phép xem lại video đã ghi
+# Tương tự tính năng DVR của YouTube Live.
+# API: GET http://localhost:9996/list?path={id}
+#      GET http://localhost:9996/get?path={id}&start=...&duration=...
+###############################################################
+playback: yes
+playbackAddress: :9996
+
+###############################################################
+# Recording – Ghi video từ tất cả paths xuống disk
+# Mỗi segment = 1 giờ, tự xóa sau 24 giờ.
+###############################################################
+recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S-%f
+recordFormat: fmp4
+recordPartDuration: 1s
+recordSegmentDuration: 1h
+recordDeleteAfter: 24h
+
+###############################################################
+# WebRTC Server – Giao thức phát WHEP đến trình duyệt
+# Cổng 8889 được trình duyệt truy cập trực tiếp.
+###############################################################
+webrtc: yes
+webrtcAddress: :8889
+
+###############################################################
+# RTSP Server – MediaMTX dùng nội bộ để kéo luồng từ Camera
+###############################################################
+rtsp: yes
+rtspAddress: :8554
+
+###############################################################
+# Paths
+###############################################################
+
+# Tất cả camera paths được tạo ĐỘNG bởi NestJS Backend
+# qua REST API /v3/config/paths/add/{id} với sourceOnDemand: true.
+# Backend sẽ truyền record: true trong payload để bật ghi hình.
+paths: {}

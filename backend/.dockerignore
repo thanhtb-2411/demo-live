@@ -1,0 +1,5 @@
+# Loại bỏ node_modules và dist khỏi Docker build context
+node_modules
+dist
+.git
+*.log

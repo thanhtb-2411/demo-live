@@ -1,0 +1,342 @@
+.container {
+  background: #060d1a;
+  border: 1px solid #1e3a5f;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+}
+
+/* ── Header ──────────────────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  background: #0d1e35;
+  border-bottom: 1px solid #1e3a5f;
+  gap: 12px;
+}
+
+.info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Status indicator dot */
+.dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot.connecting {
+  background: #eab308;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.dot.playing {
+  background: #22c55e;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.dot.error {
+  background: #ef4444;
+}
+
+.dot.closed {
+  background: #475569;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 currentColor;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statusLabel {
+  font-size: 0.78rem;
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.closeBtn {
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #cbd5e1;
+  padding: 7px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-family: inherit;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.closeBtn:hover {
+  background: #ef4444;
+  border-color: #dc2626;
+  color: #fff;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.goLiveBtn {
+  padding: 7px 14px;
+  background: #1c0a0a;
+  border: 1px solid #ef4444;
+  border-radius: 8px;
+  color: #fca5a5;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-family: inherit;
+  font-weight: 600;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.goLiveBtn:hover {
+  background: #ef4444;
+  color: #fff;
+}
+
+/* ── DVR icon in header ──────────────────────────────────── */
+.dvrIcon {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+/* ── Error Bar ───────────────────────────────────────────── */
+.errorBar {
+  background: #1c0a0a;
+  border-bottom: 1px solid #7f1d1d;
+  color: #fca5a5;
+  padding: 10px 20px;
+  font-size: 0.85rem;
+}
+
+/* ── Video Wrapper ───────────────────────────────────────── */
+.videoWrapper {
+  position: relative;
+  background: #000;
+  min-height: 420px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Loading overlay shown while WebRTC is negotiating */
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.85);
+  color: #94a3b8;
+  gap: 14px;
+  z-index: 10;
+  font-size: 0.9rem;
+}
+
+.spinner {
+  width: 44px;
+  height: 44px;
+  border: 3px solid #1e293b;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.urlHint {
+  font-size: 0.7rem;
+  color: #334155;
+  font-family: monospace;
+  word-break: break-all;
+  max-width: 400px;
+  text-align: center;
+}
+
+/* ── Video Element ───────────────────────────────────────── */
+.video {
+  width: 100%;
+  max-height: 75vh;
+  display: block;
+  background: #000;
+  /* Đảm bảo video không bị stretched */
+  object-fit: contain;
+}
+
+/* ── DVR Bar ─────────────────────────────────────────────── */
+.dvrBar {
+  background: #070d1a;
+  border-top: 1px solid #1e293b;
+  padding: 10px 20px 14px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ── Time label row ──────────────────────────────────────── */
+.labelRow {
+  position: relative;
+  height: 20px;
+  margin-bottom: 4px;
+}
+
+.edgeLabel {
+  position: absolute;
+  font-size: 0.65rem;
+  color: #475569;
+  white-space: nowrap;
+  top: 0;
+}
+
+.edgeLabel:first-child {
+  left: 0;
+}
+
+.liveEdge {
+  right: 0;
+  left: auto !important;
+  color: #ef4444;
+  font-weight: 700;
+}
+
+.midLabel {
+  position: absolute;
+  font-size: 0.65rem;
+  color: #334155;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  top: 0;
+}
+
+/* ── Track ───────────────────────────────────────────────── */
+.track {
+  position: relative;
+  height: 36px;
+  background: #111827;
+  border-radius: 6px;
+  cursor: pointer;
+  touch-action: none;
+  overflow: visible;
+}
+
+.trackDragging {
+  cursor: grabbing;
+}
+
+/* ── Segment blocks (recorded regions) ───────────────────── */
+.segBlock {
+  position: absolute;
+  top: 6px;
+  height: calc(100% - 12px);
+  background: #2563eb;
+  border-radius: 3px;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+/* ── Playhead ────────────────────────────────────────────── */
+.playhead {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 18px;
+  height: 18px;
+  background: #fff;
+  border: 3px solid #3b82f6;
+  border-radius: 50%;
+  cursor: grab;
+  z-index: 20;
+  transition:
+    transform 0.1s,
+    width 0.1s,
+    height 0.1s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: all;
+}
+
+.playhead:hover {
+  transform: translate(-50%, -50%) scale(1.25);
+}
+
+.playheadDragging {
+  cursor: grabbing;
+  transform: translate(-50%, -50%) scale(1.35) !important;
+}
+
+.playheadLive {
+  border-color: #ef4444;
+  background: #ef4444;
+  width: 14px;
+  height: 14px;
+}
+
+.liveTag {
+  position: absolute;
+  top: -20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #ef4444;
+  color: #fff;
+  font-size: 0.58rem;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ── Bottom time row ─────────────────────────────────────── */
+.timeRow {
+  margin-top: 8px;
+  text-align: center;
+  font-size: 0.78rem;
+  min-height: 18px;
+}
+
+.seekPreview {
+  color: #f59e0b;
+  font-weight: 500;
+}
+
+.dvrTimeText {
+  color: #93c5fd;
+}
+
+.liveTimeText {
+  color: #475569;
+}

@@ -1,0 +1,169 @@
+.container {
+  min-height: 100vh;
+  padding: 28px 24px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* ── Header ──────────────────────────────────────────────── */
+.header {
+  text-align: center;
+  margin-bottom: 40px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid #1e293b;
+}
+
+.title {
+  font-size: clamp(1.4rem, 3vw, 2rem);
+  font-weight: 700;
+  color: #f1f5f9;
+  margin-bottom: 8px;
+  letter-spacing: -0.02em;
+}
+
+.subtitle {
+  color: #64748b;
+  font-size: 0.875rem;
+}
+
+/* ── Section ─────────────────────────────────────────────── */
+.section {
+  margin-bottom: 28px;
+}
+
+.sectionTitle {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 16px;
+}
+
+/* ── Camera Grid ─────────────────────────────────────────── */
+.cameraGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.cameraCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 18px 22px;
+  min-width: 148px;
+  background: #111827;
+  border: 1px solid #1e293b;
+  border-radius: 14px;
+  color: #e2e8f0;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  font-size: 0.875rem;
+  font-family: inherit;
+}
+
+.cameraCard:hover:not(:disabled) {
+  background: #1e2d45;
+  border-color: #3b82f6;
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.15);
+}
+
+.cameraCard:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.cameraCard.active {
+  background: #0f2444;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35);
+}
+
+.cameraCard.loading {
+  background: #1a1f2e;
+  border-color: #eab308;
+}
+
+.cameraIcon {
+  font-size: 1.75rem;
+}
+
+.cameraName {
+  font-weight: 600;
+  text-align: center;
+}
+
+.cameraId {
+  font-size: 0.72rem;
+  color: #475569;
+  font-family: monospace;
+}
+
+.loadingText {
+  font-size: 0.72rem;
+  color: #eab308;
+  animation: blink 1s step-start infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ── Empty State ─────────────────────────────────────────── */
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 48px;
+  background: #111827;
+  border: 1px dashed #1e293b;
+  border-radius: 14px;
+  color: #475569;
+  text-align: center;
+}
+
+.emptyIcon {
+  font-size: 2.5rem;
+}
+
+/* ── Error Banner ────────────────────────────────────────── */
+.errorBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #1c0a0a;
+  border: 1px solid #7f1d1d;
+  border-radius: 10px;
+  padding: 12px 18px;
+  margin-bottom: 20px;
+  color: #fca5a5;
+  font-size: 0.875rem;
+}
+
+.dismissBtn {
+  background: none;
+  border: none;
+  color: #fca5a5;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.dismissBtn:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+/* ── Player Section ──────────────────────────────────────── */
+.playerSection {
+  margin-top: 8px;
+}
