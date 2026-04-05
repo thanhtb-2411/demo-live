@@ -13,7 +13,7 @@ logDestinations: [stdout]
 # mỗi khi có kết nối mới. Backend validate JWT token trong
 # query string (?token=...) trước khi cho phép xem stream.
 ###############################################################
-externalAuthenticationURL: http://127.0.0.1:3001/api/auth/mediamtx
+#externalAuthenticationURL: http://127.0.0.1:3001/api/auth/mediamtx
 
 ###############################################################
 # REST API – Backend NestJS sẽ gọi API này để cấu hình paths
@@ -23,21 +23,35 @@ api: yes
 apiAddress: :9997
 
 ###############################################################
+# Authentication – Username/Password cho REST API & Streams
+###############################################################
+authMethod: internal
+authInternalUsers:
+  - user: admin
+    pass: admin123
+    permissions:
+      - action: api
+      - action: read
+  - user: viewer
+    pass: viewer123
+    permissions:
+      - action: read
+
+hls: false
+srt: false
+rtsp: false
+
+###############################################################
 # WebRTC Server – Giao thức phát WHEP đến trình duyệt (LIVE)
 # Cổng 8889 được trình duyệt truy cập trực tiếp.
 # Độ trễ: < 0.5s
 ###############################################################
 webrtc: yes
 webrtcAddress: :8889
-# TCP ICE mux: fallback ổn định hơn UDP cho long-running sessions
-# (tránh ICE: disconnected khi UDP state bị expire trên router/switch)
-webrtcICETCPMuxAddress: :8887
-
+webrtcLocalUDPAddress: :8189
 ###############################################################
 # RTSP Server – MediaMTX dùng nội bộ để kéo luồng từ Camera
 ###############################################################
-rtsp: yes
-rtspAddress: :8554
 ###############################################################
 # Paths
 ###############################################################

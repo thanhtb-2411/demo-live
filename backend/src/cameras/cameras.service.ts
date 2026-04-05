@@ -29,10 +29,11 @@ export class CamerasService {
   private readonly mediamtxPlaybackPort =
     process.env.MEDIAMTX_PLAYBACK_PORT || "9996";
   private readonly mediamtxHlsPort = process.env.MEDIAMTX_HLS_PORT || "8888";
-  private readonly mediamtxApiUser =
-    process.env.MEDIAMTX_API_USER || "admin_user";
+  private readonly mediamtxRtspTransport =
+    process.env.MEDIAMTX_RTSP_TRANSPORT || "tcp";
+  private readonly mediamtxApiUser = process.env.MEDIAMTX_API_USER || "admin";
   private readonly mediamtxApiPass =
-    process.env.MEDIAMTX_API_PASS || "admin_password";
+    process.env.MEDIAMTX_API_PASS || "admin123";
   private readonly dvrWindowSeconds = parseInt(
     process.env.DVR_WINDOW_SECONDS || "300",
     10,
@@ -122,6 +123,7 @@ export class CamerasService {
   ): Promise<void> {
     const payload = {
       source: rtspUrl,
+      sourceProtocol: this.mediamtxRtspTransport,
       sourceOnDemand: true,
       // Thời gian chờ nguồn RTSP sẵn sàng (FFmpeg có thể chưa push kịp)
       sourceOnDemandStartTimeout: "30s",

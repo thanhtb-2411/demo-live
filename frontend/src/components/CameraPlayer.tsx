@@ -61,6 +61,14 @@ export default function CameraPlayer({
   dvrWindowSeconds,
   onClose,
 }: CameraPlayerProps) {
+  const logDiag = (...args: unknown[]) => {
+    console.log("[WebRTC-DIAG]", ...args);
+  };
+
+  const warnDiag = (...args: unknown[]) => {
+    console.warn("[WebRTC-DIAG]", ...args);
+  };
+
   // ── Refs ──────────────────────────────────────────────────
   const liveVideoRef = useRef<HTMLVideoElement>(null);
   const dvrVideoRef = useRef<HTMLVideoElement>(null);
@@ -75,7 +83,15 @@ export default function CameraPlayer({
   const streamStartRef = useRef<number>(Date.now()); // khi user bắt đầu xem
   const modeRef = useRef<Mode>("live");
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const statsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const retryCountRef = useRef<number>(0);
+  const prevInboundVideoStatsRef = useRef<{
+    timestamp: number;
+    bytesReceived?: number;
+    packetsReceived?: number;
+    framesDecoded?: number;
+    keyFramesDecoded?: number;
+  } | null>(null);
 
   // ── State ─────────────────────────────────────────────────
   const [mode, setMode] = useState<Mode>("live");
@@ -127,6 +143,11 @@ export default function CameraPlayer({
     }
     setLiveStatus("connecting");
     setErrorMsg("");
+    logDiag("connect:start", {
+      cameraName,
+      streamUrl,
+      retryKey,
+    });
     let cancelled = false;
 
     const scheduleReconnect = (delaySec: number) => {
@@ -158,6 +179,28 @@ export default function CameraPlayer({
         });
         pcRef.current = pc;
 
+        pc.onconnectionstatechange = () => {
+          logDiag("pc:connectionState", pc.connectionState);
+        };
+
+        pc.onsignalingstatechange = () => {
+          logDiag("pc:signalingState", pc.signalingState);
+        };
+
+        pc.onicegatheringstatechange = () => {
+          logDiag("pc:iceGatheringState", pc.iceGatheringState);
+        };
+
+        pc.onicecandidateerror = (event) => {
+          warnDiag("pc:iceCandidateError", {
+            address: event.address,
+            port: event.port,
+            url: event.url,
+            errorCode: event.errorCode,
+            errorText: event.errorText,
+          });
+        };
+
         pc.addTransceiver("video", { direction: "recvonly" });
         pc.addTransceiver("audio", { direction: "recvonly" });
 
@@ -165,7 +208,21 @@ export default function CameraPlayer({
           if (cancelled || !liveVideoRef.current) return;
           const stream = e.streams[0];
           if (!stream) return;
-          liveVideoRef.current.srcObject = stream;
+          const liveVideo = liveVideoRef.current;
+          if (liveVideo.srcObject !== stream) {
+            liveVideo.srcObject = stream;
+          }
+          liveVideo
+            .play()
+            .then(() => logDiag("video:play-call:ok"))
+            .catch((playErr) => warnDiag("video:play-call:error", playErr));
+          logDiag("track:received", {
+            kind: e.track.kind,
+            id: e.track.id,
+            muted: e.track.muted,
+            readyState: e.track.readyState,
+            settings: e.track.getSettings?.(),
+          });
 
           // Start in-memory recording for DVR
           if (!mediaRecorderRef.current) {
@@ -210,6 +267,7 @@ export default function CameraPlayer({
         pc.oniceconnectionstatechange = () => {
           if (cancelled) return;
           const s = pc.iceConnectionState;
+          logDiag("pc:iceConnectionState", s);
           if (s === "connected" || s === "completed") {
             retryCountRef.current = 0;
             if (reconnectTimerRef.current) {
@@ -217,6 +275,72 @@ export default function CameraPlayer({
               reconnectTimerRef.current = null;
             }
             setLiveStatus("playing");
+
+            if (statsTimerRef.current) {
+              clearInterval(statsTimerRef.current);
+              statsTimerRef.current = null;
+            }
+
+            statsTimerRef.current = setInterval(async () => {
+              if (!pcRef.current) return;
+              try {
+                const report = await pcRef.current.getStats();
+                report.forEach((r) => {
+                  if (r.type === "inbound-rtp" && r.kind === "video") {
+                    const prev = prevInboundVideoStatsRef.current;
+                    let derived: Record<string, number> | undefined;
+
+                    if (prev && r.timestamp > prev.timestamp) {
+                      const dtSec = (r.timestamp - prev.timestamp) / 1000;
+                      if (dtSec > 0) {
+                        const deltaBytes =
+                          (r.bytesReceived ?? 0) - (prev.bytesReceived ?? 0);
+                        const deltaPackets =
+                          (r.packetsReceived ?? 0) - (prev.packetsReceived ?? 0);
+                        const deltaFrames =
+                          (r.framesDecoded ?? 0) - (prev.framesDecoded ?? 0);
+                        const deltaKeyFrames =
+                          (r.keyFramesDecoded ?? 0) -
+                          (prev.keyFramesDecoded ?? 0);
+
+                        derived = {
+                          bitrateKbps: Number(((deltaBytes * 8) / dtSec / 1000).toFixed(1)),
+                          packetsPerSec: Number((deltaPackets / dtSec).toFixed(1)),
+                          decodedFps: Number((deltaFrames / dtSec).toFixed(2)),
+                          keyFramesPerSec: Number((deltaKeyFrames / dtSec).toFixed(2)),
+                        };
+                      }
+                    }
+
+                    prevInboundVideoStatsRef.current = {
+                      timestamp: r.timestamp,
+                      bytesReceived: r.bytesReceived,
+                      packetsReceived: r.packetsReceived,
+                      framesDecoded: r.framesDecoded,
+                      keyFramesDecoded: r.keyFramesDecoded,
+                    };
+
+                    logDiag("stats:inbound-video", {
+                      timestamp: r.timestamp,
+                      packetsReceived: r.packetsReceived,
+                      packetsLost: r.packetsLost,
+                      jitter: r.jitter,
+                      bytesReceived: r.bytesReceived,
+                      framesDecoded: r.framesDecoded,
+                      framesDropped: r.framesDropped,
+                      framesPerSecond: r.framesPerSecond,
+                      keyFramesDecoded: r.keyFramesDecoded,
+                      pliCount: r.pliCount,
+                      firCount: r.firCount,
+                      nackCount: r.nackCount,
+                      ...derived,
+                    });
+                  }
+                });
+              } catch (statsErr) {
+                warnDiag("stats:error", statsErr);
+              }
+            }, 2000);
           } else if (s === "disconnected") {
             // Transient – give 5 s to self-heal before reconnecting
             scheduleReconnect(5);
@@ -231,6 +355,10 @@ export default function CameraPlayer({
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
+        logDiag("sdp:offer-created", {
+          hasLocalDescription: Boolean(pc.localDescription?.sdp),
+          type: pc.localDescription?.type,
+        });
 
         await new Promise<void>((resolve) => {
           if (pc.iceGatheringState === "complete") return resolve();
@@ -246,18 +374,40 @@ export default function CameraPlayer({
 
         if (cancelled) return;
 
+        // 1. Tạo chuỗi xác thực (User:Pass)
+        const credentials = `viewer:viewer123`;
+
+        // 2. Mã hóa Base64 (dùng btoa trong trình duyệt hoặc Buffer trong Node.js)
+        const authHeader = btoa(credentials); // Nếu chạy trên Browser
+
         const res = await fetch(streamUrl, {
           method: "POST",
-          headers: { "Content-Type": "application/sdp" },
+          headers: {
+            "Content-Type": "application/sdp",
+            // 3. Thêm Header Authorization đúng chuẩn
+            Authorization: `Basic ${authHeader}`,
+          },
           body: pc.localDescription!.sdp,
         });
+
+        logDiag("whep:post-response", {
+          status: res.status,
+          ok: res.ok,
+          id: res.headers.get("id"),
+          location: res.headers.get("location"),
+        });
+
         if (!res.ok) throw new Error(`WHEP ${res.status}`);
 
         const answerSdp = await res.text();
         if (cancelled) return;
         await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+        logDiag("sdp:answer-applied", {
+          answerLength: answerSdp.length,
+        });
       } catch (err: unknown) {
         if (!cancelled) {
+          warnDiag("connect:error", err);
           setLiveStatus("error");
           setErrorMsg(
             err instanceof Error ? err.message : "Lỗi không xác định",
@@ -274,6 +424,11 @@ export default function CameraPlayer({
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
+      if (statsTimerRef.current) {
+        clearInterval(statsTimerRef.current);
+        statsTimerRef.current = null;
+      }
+      prevInboundVideoStatsRef.current = null;
       if (mediaRecorderRef.current) {
         try {
           mediaRecorderRef.current.stop();
@@ -288,8 +443,59 @@ export default function CameraPlayer({
       }
       const v = liveVideoRef.current;
       if (v) v.srcObject = null;
+      logDiag("connect:cleanup");
     };
-  }, [streamUrl, retryKey]);
+  }, [cameraName, streamUrl, retryKey]);
+
+  // Log HTMLVideoElement lifecycle to separate transport issues from render/decode issues.
+  useEffect(() => {
+    const video = liveVideoRef.current;
+    if (!video) return;
+
+    const onLoadedMetadata = () => {
+      logDiag("video:event:loadedmetadata", {
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+        readyState: video.readyState,
+      });
+    };
+    const onCanPlay = () => logDiag("video:event:canplay");
+    const onPlaying = () => {
+      logDiag("video:event:playing", {
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+        currentTime: Number(video.currentTime.toFixed(3)),
+      });
+    };
+    const onWaiting = () => warnDiag("video:event:waiting");
+    const onStalled = () => warnDiag("video:event:stalled");
+    const onPause = () => logDiag("video:event:pause");
+    const onError = () => {
+      const mediaError = video.error;
+      warnDiag("video:event:error", {
+        code: mediaError?.code,
+        message: mediaError?.message,
+      });
+    };
+
+    video.addEventListener("loadedmetadata", onLoadedMetadata);
+    video.addEventListener("canplay", onCanPlay);
+    video.addEventListener("playing", onPlaying);
+    video.addEventListener("waiting", onWaiting);
+    video.addEventListener("stalled", onStalled);
+    video.addEventListener("pause", onPause);
+    video.addEventListener("error", onError);
+
+    return () => {
+      video.removeEventListener("loadedmetadata", onLoadedMetadata);
+      video.removeEventListener("canplay", onCanPlay);
+      video.removeEventListener("playing", onPlaying);
+      video.removeEventListener("waiting", onWaiting);
+      video.removeEventListener("stalled", onStalled);
+      video.removeEventListener("pause", onPause);
+      video.removeEventListener("error", onError);
+    };
+  }, []);
 
   // ── Cleanup MediaRecorder + blob URL on unmount ──────────
   useEffect(() => {
@@ -318,13 +524,35 @@ export default function CameraPlayer({
     if (!video) return;
 
     let lastTime = -1;
+    let stalledCount = 0;
     const id = setInterval(() => {
       if (modeRef.current !== "live") return;
       const t = video.currentTime;
+      const quality =
+        typeof video.getVideoPlaybackQuality === "function"
+          ? video.getVideoPlaybackQuality()
+          : null;
+
+      logDiag("video:playback", {
+        currentTime: Number(t.toFixed(3)),
+        paused: video.paused,
+        readyState: video.readyState,
+        networkState: video.networkState,
+        droppedVideoFrames: quality?.droppedVideoFrames,
+        totalVideoFrames: quality?.totalVideoFrames,
+      });
+
       if (lastTime >= 0 && t === lastTime && !video.paused) {
+        stalledCount += 1;
+        warnDiag("video:stalled", {
+          currentTime: t,
+          stalledCount,
+        });
         // Video không tiến sau 20s → stream bị đóng băng, reconnect
         retryCountRef.current += 1;
         setRetryKey((k) => k + 1);
+      } else {
+        stalledCount = 0;
       }
       lastTime = t;
     }, 20_000);
