@@ -128,7 +128,7 @@ export default function CameraPlayer({
 
   // Refresh "now" every 2s so timeline keeps growing
   useEffect(() => {
-    const id = setInterval(() => setNowTime(new Date()), 2000);
+    const id = setInterval(() => setNowTime(new Date()), 100);
     return () => clearInterval(id);
   }, []);
 
@@ -296,7 +296,8 @@ export default function CameraPlayer({
                         const deltaBytes =
                           (r.bytesReceived ?? 0) - (prev.bytesReceived ?? 0);
                         const deltaPackets =
-                          (r.packetsReceived ?? 0) - (prev.packetsReceived ?? 0);
+                          (r.packetsReceived ?? 0) -
+                          (prev.packetsReceived ?? 0);
                         const deltaFrames =
                           (r.framesDecoded ?? 0) - (prev.framesDecoded ?? 0);
                         const deltaKeyFrames =
@@ -304,10 +305,16 @@ export default function CameraPlayer({
                           (prev.keyFramesDecoded ?? 0);
 
                         derived = {
-                          bitrateKbps: Number(((deltaBytes * 8) / dtSec / 1000).toFixed(1)),
-                          packetsPerSec: Number((deltaPackets / dtSec).toFixed(1)),
+                          bitrateKbps: Number(
+                            ((deltaBytes * 8) / dtSec / 1000).toFixed(1),
+                          ),
+                          packetsPerSec: Number(
+                            (deltaPackets / dtSec).toFixed(1),
+                          ),
                           decodedFps: Number((deltaFrames / dtSec).toFixed(2)),
-                          keyFramesPerSec: Number((deltaKeyFrames / dtSec).toFixed(2)),
+                          keyFramesPerSec: Number(
+                            (deltaKeyFrames / dtSec).toFixed(2),
+                          ),
                         };
                       }
                     }

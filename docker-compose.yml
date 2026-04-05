@@ -11,7 +11,7 @@ services:
   # 1. MediaMTX – Media Server (WebRTC WHEP + REST API)
   # ----------------------------------------------------------
   mediamtx:
-    image: bluenviron/mediamtx:latest
+    image: bluenviron/mediamtx:latest-ffmpeg
     container_name: mediamtx
     restart: unless-stopped
     network_mode: host
@@ -39,6 +39,9 @@ services:
       - MEDIAMTX_WEBRTC_PORT=${MEDIAMTX_WEBRTC_PORT:-8889}
       - MEDIAMTX_PLAYBACK_PORT=${MEDIAMTX_PLAYBACK_PORT:-9996}
       - MEDIAMTX_HLS_PORT=${MEDIAMTX_HLS_PORT:-8888}
+      - MEDIAMTX_RTSP_TRANSPORT=${MEDIAMTX_RTSP_TRANSPORT:-tcp}
+      - MEDIAMTX_RTSP_PORT=${MEDIAMTX_RTSP_PORT:-8554}
+      - MEDIAMTX_REENCODER_PASS=${MEDIAMTX_REENCODER_PASS:-reencoder123}
       - DVR_WINDOW_SECONDS=${DVR_WINDOW_SECONDS:-600}
       - JWT_SECRET=${JWT_SECRET}
       - DEMO_RTSP=${DEMO_RTSP}

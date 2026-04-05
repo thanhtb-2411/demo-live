@@ -36,10 +36,20 @@ authInternalUsers:
     pass: viewer123
     permissions:
       - action: read
+  # User nội bộ dành riêng cho FFmpeg re-encode push
+  - user: reencoder
+    pass: reencoder123
+    permissions:
+      - action: publish
 
 hls: false
 srt: false
-rtsp: false
+###############################################################
+# RTSP Server – chỉ bind localhost, dùng nội bộ để FFmpeg
+# re-encode và push stream trở lại MediaMTX.
+###############################################################
+rtsp: yes
+rtspAddress: 127.0.0.1:8554
 
 ###############################################################
 # WebRTC Server – Giao thức phát WHEP đến trình duyệt (LIVE)
