@@ -26,16 +26,10 @@ export class CamerasController {
     return this.camerasService.createCamera(body.name, body.source);
   }
 
-  /** GET /api/cameras/:id/live – WHEP URL cho live stream */
+  /** GET /api/cameras/:id/live – HLS URL cho live stream */
   @Get(":id/live")
   getLiveStream(@Param("id") id: string) {
     return this.camerasService.getLiveStream(id);
-  }
-
-  /** GET /api/cameras/:id/recordings – danh sách bản ghi */
-  @Get(":id/recordings")
-  getRecordings(@Param("id") id: string) {
-    return this.camerasService.getRecordings(id);
   }
 
   /** GET /api/cameras/:id – chi tiết camera (kèm source để edit) */

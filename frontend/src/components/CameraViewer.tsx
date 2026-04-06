@@ -9,10 +9,7 @@ interface Camera {
   name: string;
 }
 
-type ModalState =
-  | null
-  | { mode: "add" }
-  | { mode: "edit"; camera: Camera };
+type ModalState = null | { mode: "add" } | { mode: "edit"; camera: Camera };
 
 export default function CameraViewer() {
   const [cameras, setCameras] = useState<Camera[]>([]);
@@ -63,7 +60,9 @@ export default function CameraViewer() {
       setDvrWindowSeconds(data.dvrWindowSeconds ?? 300);
       setActiveCamera(camera);
     } catch (err: unknown) {
-      setError(`Không thể kết nối "${camera.name}": ${err instanceof Error ? err.message : "Lỗi không xác định"}`);
+      setError(
+        `Không thể kết nối "${camera.name}": ${err instanceof Error ? err.message : "Lỗi không xác định"}`,
+      );
     } finally {
       setLoadingId(null);
     }
@@ -93,12 +92,20 @@ export default function CameraViewer() {
         const data = await res.json();
         setFormSource(data.source ?? "");
       }
-    } catch { /* giữ form rỗng nếu fetch lỗi */ }
+    } catch {
+      /* giữ form rỗng nếu fetch lỗi */
+    }
   };
 
   const handleSave = async () => {
-    if (!formName.trim()) { setFormError("Tên camera không được để trống"); return; }
-    if (!formSource.trim()) { setFormError("Địa chỉ RTSP không được để trống"); return; }
+    if (!formName.trim()) {
+      setFormError("Tên camera không được để trống");
+      return;
+    }
+    if (!formSource.trim()) {
+      setFormError("Địa chỉ RTSP không được để trống");
+      return;
+    }
     setFormLoading(true);
     setFormError("");
     try {
@@ -106,14 +113,20 @@ export default function CameraViewer() {
         const res = await fetch("/api/cameras", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: formName.trim(), source: formSource.trim() }),
+          body: JSON.stringify({
+            name: formName.trim(),
+            source: formSource.trim(),
+          }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
       } else if (modal?.mode === "edit") {
         const res = await fetch(`/api/cameras/${modal.camera.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: formName.trim(), source: formSource.trim() }),
+          body: JSON.stringify({
+            name: formName.trim(),
+            source: formSource.trim(),
+          }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
       }
@@ -145,7 +158,7 @@ export default function CameraViewer() {
       <header className={styles.header}>
         <h1 className={styles.title}>🎥 Hệ Thống Camera Live Stream</h1>
         <p className={styles.subtitle}>
-          WebRTC (WHEP) + In-Memory DVR &nbsp;|&nbsp; MediaMTX &nbsp;|&nbsp; Độ trễ &lt; 0.5s
+          HLS Live + DVR (10 phút) &nbsp;|&nbsp; MediaMTX &nbsp;|&nbsp; hls.js
         </p>
       </header>
 
@@ -153,7 +166,9 @@ export default function CameraViewer() {
       <section className={styles.section}>
         <div className={styles.mgmtRow}>
           <h2 className={styles.sectionTitle}>Danh Sách Camera</h2>
-          <button className={styles.addBtn} onClick={openAddModal}>+ Thêm Camera</button>
+          <button className={styles.addBtn} onClick={openAddModal}>
+            + Thêm Camera
+          </button>
         </div>
 
         {loadingList ? (
@@ -164,7 +179,9 @@ export default function CameraViewer() {
         ) : cameras.length === 0 ? (
           <div className={styles.emptyState}>
             <span className={styles.emptyIcon}>📡</span>
-            <p>Chưa có camera nào. Nhấn &quot;+ Thêm Camera&quot; để bắt đầu.</p>
+            <p>
+              Chưa có camera nào. Nhấn &quot;+ Thêm Camera&quot; để bắt đầu.
+            </p>
           </div>
         ) : (
           <div className={styles.cameraGrid}>
@@ -187,7 +204,11 @@ export default function CameraViewer() {
                     </span>
                     <span className={styles.cameraName}>{cam.name}</span>
                     <span className={styles.cameraId}>{cam.id}</span>
-                    {isLoading && <span className={styles.loadingText}>Đang kết nối...</span>}
+                    {isLoading && (
+                      <span className={styles.loadingText}>
+                        Đang kết nối...
+                      </span>
+                    )}
                   </button>
                   <div className={styles.cardActions}>
                     <button
@@ -216,7 +237,13 @@ export default function CameraViewer() {
       {error && (
         <div className={styles.errorBanner} role="alert">
           <span>⚠️ {error}</span>
-          <button className={styles.dismissBtn} onClick={() => setError("")} aria-label="Đóng">✕</button>
+          <button
+            className={styles.dismissBtn}
+            onClick={() => setError("")}
+            aria-label="Đóng"
+          >
+            ✕
+          </button>
         </div>
       )}
 
@@ -236,10 +263,18 @@ export default function CameraViewer() {
 
       {/* Add / Edit Modal */}
       {modal && (
-        <div className={styles.modalOverlay} onClick={() => !formLoading && setModal(null)}>
-          <div className={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+        <div
+          className={styles.modalOverlay}
+          onClick={() => !formLoading && setModal(null)}
+        >
+          <div
+            className={styles.modalContent}
+            onClick={(e) => e.stopPropagation()}
+          >
             <h3 className={styles.modalTitle}>
-              {modal.mode === "add" ? "Thêm Camera Mới" : `Chỉnh Sửa: ${modal.mode === "edit" ? modal.camera.name : ""}`}
+              {modal.mode === "add"
+                ? "Thêm Camera Mới"
+                : `Chỉnh Sửa: ${modal.mode === "edit" ? modal.camera.name : ""}`}
             </h3>
 
             <div className={styles.formGroup}>
@@ -270,10 +305,18 @@ export default function CameraViewer() {
             {formError && <p className={styles.formError}>⚠️ {formError}</p>}
 
             <div className={styles.modalActions}>
-              <button className={styles.cancelBtn} onClick={() => setModal(null)} disabled={formLoading}>
+              <button
+                className={styles.cancelBtn}
+                onClick={() => setModal(null)}
+                disabled={formLoading}
+              >
                 Hủy
               </button>
-              <button className={styles.saveBtn} onClick={handleSave} disabled={formLoading}>
+              <button
+                className={styles.saveBtn}
+                onClick={handleSave}
+                disabled={formLoading}
+              >
                 {formLoading ? "Đang lưu..." : "Lưu"}
               </button>
             </div>
@@ -283,16 +326,36 @@ export default function CameraViewer() {
 
       {/* Confirm Delete */}
       {confirmDeleteId && (
-        <div className={styles.modalOverlay} onClick={() => setConfirmDeleteId(null)}>
-          <div className={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+        <div
+          className={styles.modalOverlay}
+          onClick={() => setConfirmDeleteId(null)}
+        >
+          <div
+            className={styles.modalContent}
+            onClick={(e) => e.stopPropagation()}
+          >
             <h3 className={styles.modalTitle}>Xác Nhận Xóa</h3>
             <p className={styles.confirmText}>
-              Bạn có chắc muốn xóa camera <strong>{cameras.find((c) => c.id === confirmDeleteId)?.name ?? confirmDeleteId}</strong> không?
-              Hành động này không thể hoàn tác.
+              Bạn có chắc muốn xóa camera{" "}
+              <strong>
+                {cameras.find((c) => c.id === confirmDeleteId)?.name ??
+                  confirmDeleteId}
+              </strong>{" "}
+              không? Hành động này không thể hoàn tác.
             </p>
             <div className={styles.modalActions}>
-              <button className={styles.cancelBtn} onClick={() => setConfirmDeleteId(null)}>Hủy</button>
-              <button className={styles.deleteConfirmBtn} onClick={() => handleDelete(confirmDeleteId)}>Xóa</button>
+              <button
+                className={styles.cancelBtn}
+                onClick={() => setConfirmDeleteId(null)}
+              >
+                Hủy
+              </button>
+              <button
+                className={styles.deleteConfirmBtn}
+                onClick={() => handleDelete(confirmDeleteId)}
+              >
+                Xóa
+              </button>
             </div>
           </div>
         </div>

@@ -1,19 +1,11 @@
 ###############################################################
 # MediaMTX – Cấu hình cho hệ thống Live Stream Camera
-# WebRTC (WHEP) + HLS (DVR) + REST API động
+# HLS (Live + DVR) + REST API động
 ###############################################################
 
 # Mức độ log: error | warn | info | debug
 logLevel: debug
 logDestinations: [stdout]
-
-###############################################################
-# Authentication – External callback về NestJS Backend
-# MediaMTX gọi POST http://127.0.0.1:3001/api/auth/mediamtx
-# mỗi khi có kết nối mới. Backend validate JWT token trong
-# query string (?token=...) trước khi cho phép xem stream.
-###############################################################
-#externalAuthenticationURL: http://127.0.0.1:3001/api/auth/mediamtx
 
 ###############################################################
 # REST API – Backend NestJS sẽ gọi API này để cấu hình paths
@@ -36,36 +28,28 @@ authInternalUsers:
     pass: viewer123
     permissions:
       - action: read
-  # User nội bộ dành riêng cho FFmpeg re-encode push
-  - user: reencoder
-    pass: reencoder123
-    permissions:
-      - action: publish
 
-hls: false
+###############################################################
+# HLS Server – Phát HLS đến trình duyệt (LIVE + DVR)
+# Cổng 8888 được trình duyệt truy cập trực tiếp.
+# DVR window: hlsSegmentCount × hlsSegmentDuration = 600s (10 phút)
+###############################################################
+hls: yes
+hlsAddress: :8888
+hlsAllowOrigin: "*"
+hlsAlwaysRemux: false
+hlsSegmentCount: 300
+hlsSegmentDuration: 2s
+# Đóng HLS muxer sau 60s không có viewer (giải phóng bộ nhớ)
+hlsMuxerCloseAfter: 60s
+
+webrtc: false
 srt: false
-###############################################################
-# RTSP Server – chỉ bind localhost, dùng nội bộ để FFmpeg
-# re-encode và push stream trở lại MediaMTX.
-###############################################################
-qrtspAddress: 127.0.0.1:8554
 
-###############################################################
-# WebRTC Server – Giao thức phát WHEP đến trình duyệt (LIVE)
-# Cổng 8889 được trình duyệt truy cập trực tiếp.
-# Độ trễ: < 0.5s
-###############################################################
-webrtc: yes
-webrtcAddress: :8889
-webrtcLocalUDPAddress: :8189
-###############################################################
-# RTSP Server – MediaMTX dùng nội bộ để kéo luồng từ Camera
-###############################################################
 ###############################################################
 # Paths
 ###############################################################
 
 # Tất cả camera paths được tạo ĐỘNG bởi NestJS Backend
 # qua REST API /v3/config/paths/add/{id} với sourceOnDemand: true.
-# Backend sẽ truyền record: true trong payload để bật ghi hình.
 paths: {}

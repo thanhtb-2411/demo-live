@@ -9,14 +9,6 @@ import axios from "axios";
 import * as jwt from "jsonwebtoken";
 import { cameraStore } from "./cameras.data";
 
-export interface RecordingSegment {
-  start: string; // RFC3339 timestamp
-  duration: number; // seconds
-  durationLabel: string; // human-readable, e.g. "1h 23ph"
-  label: string; // formatted start time
-  url: string; // pre-signed playback URL
-}
-
 @Injectable()
 export class CamerasService {
   private readonly logger = new Logger(CamerasService.name);
@@ -24,16 +16,7 @@ export class CamerasService {
   // Đọc cấu hình MediaMTX từ biến môi trường (được set trong docker-compose)
   private readonly mediamtxHost = process.env.MEDIAMTX_HOST || "localhost";
   private readonly mediamtxApiPort = process.env.MEDIAMTX_API_PORT || "9997";
-  private readonly mediamtxWebRTCPort =
-    process.env.MEDIAMTX_WEBRTC_PORT || "8889";
-  private readonly mediamtxPlaybackPort =
-    process.env.MEDIAMTX_PLAYBACK_PORT || "9996";
   private readonly mediamtxHlsPort = process.env.MEDIAMTX_HLS_PORT || "8888";
-  private readonly mediamtxRtspTransport =
-    process.env.MEDIAMTX_RTSP_TRANSPORT || "tcp";
-  private readonly mediamtxRtspPort = process.env.MEDIAMTX_RTSP_PORT || "8554";
-  private readonly mediamtxReencoderPass =
-    process.env.MEDIAMTX_REENCODER_PASS || "reencoder123";
   private readonly mediamtxApiUser = process.env.MEDIAMTX_API_USER || "admin";
   private readonly mediamtxApiPass =
     process.env.MEDIAMTX_API_PASS || "admin123";
@@ -63,12 +46,11 @@ export class CamerasService {
   /**
    * Cốt lõi của hệ thống:
    * 1. Lấy thông tin camera từ mock DB (bao gồm video.source – RTSP URL đầy đủ)
-   * 2. Gọi REST API MediaMTX để tạo/cập nhật path On-Demand
-   * 3. Trả về WHEP URL (live) + HLS URL (DVR) + token
+   * 2. Gọi REST API MediaMTX để tạo/cập nhật path (source on-demand)
+   * 3. Trả về HLS URL + token
    */
   async getLiveStream(id: string): Promise<{
     streamUrl: string;
-    hlsUrl: string;
     token: string;
     dvrWindowSeconds: number;
   }> {
@@ -86,25 +68,18 @@ export class CamerasService {
     await this.configureMediaMTXPath(camera.id, rtspUrl);
 
     // Sinh JWT token có thời hạn 24 giờ
-    // Dùng chung cho cả WebRTC WHEP và HLS
     const token = jwt.sign({ cameraId: camera.id }, this.jwtSecret, {
       expiresIn: "24h",
     });
 
-    // WHEP URL cho WebRTC live
-    const streamUrl = `http://${this.mediamtxHost}:${this.mediamtxWebRTCPort}/${camera.id}/whep?token=${token}`;
+    // HLS URL – trình duyệt dùng hls.js để phát live và seek trong DVR window
+    const streamUrl = `http://${this.mediamtxHost}:${this.mediamtxHlsPort}/${camera.id}/index.m3u8`;
 
-    // HLS URL cho DVR/playback
-    // Frontend sẽ dùng hls.js để load và seek trong DVR window
-    const hlsUrl = `http://${this.mediamtxHost}:${this.mediamtxHlsPort}/${camera.id}/index.m3u8`;
-
-    this.logger.log(`[${camera.id}] WHEP URL: ${streamUrl}`);
-    this.logger.log(`[${camera.id}] HLS URL: ${hlsUrl}?token=...`);
+    this.logger.log(`[${camera.id}] HLS URL: ${streamUrl}`);
     this.logger.log(`[${camera.id}] DVR window: ${this.dvrWindowSeconds}s`);
 
     return {
       streamUrl,
-      hlsUrl,
       token,
       dvrWindowSeconds: this.dvrWindowSeconds,
     };
@@ -115,167 +90,93 @@ export class CamerasService {
    * - Nếu path chưa tồn tại → POST /v3/config/paths/add/{id} (tạo mới)
    * - Nếu path đã tồn tại (HTTP 400) → PATCH /v3/config/paths/patch/{id} (cập nhật)
    *
-   * Dùng runOnDemand thay vì source passthrough:
-   * Khi có viewer → MediaMTX chạy FFmpeg để:
-   *   1. Pull RTSP từ camera gốc
-   *   2. Re-encode H.264 với GOP chuẩn (30 frames, không scene-cut, zerolatency)
-   *   3. Push kết quả về MediaMTX qua RTSP nội bộ (127.0.0.1:8554)
-   * → WebRTC nhận đúng P-frame/B-frame → FPS ổn định
+   * Dùng source passthrough (on-demand):
+   * MediaMTX tự pull RTSP từ camera khi có viewer đầu tiên kết nối,
+   * tự động tắt sau khi không còn viewer.
    */
   private async configureMediaMTXPath(
     pathId: string,
     rtspUrl: string,
   ): Promise<void> {
-    // URL để FFmpeg push stream re-encoded vào MediaMTX
-    const rtspPushUrl = `rtsp://reencoder:${this.mediamtxReencoderPass}@127.0.0.1:${this.mediamtxRtspPort}/${pathId}`;
-
-    // FFmpeg: pull → re-encode H.264 với GOP cố định → push về MediaMTX
-    // -g 30 -keyint_min 25 -sc_threshold 0: GOP ~1s, không bị scene-cut insert keyframe
-    // -tune zerolatency: tắt B-frame, giảm buffer → độ trễ thấp cho WebRTC
-    const ffmpegCmd = [
-      `ffmpeg -nostdin -hide_banner -loglevel warning`,
-      `-rtsp_transport ${this.mediamtxRtspTransport}`,
-      `-i '${rtspUrl}'`,
-      `-c:v libx264 -preset veryfast -tune zerolatency`,
-      `-g 30 -keyint_min 25 -sc_threshold 0`,
-      `-c:a aac`,
-      `-f rtsp '${rtspPushUrl}'`,
-    ].join(" ");
-
     const payload = {
-      runOnDemand: ffmpegCmd,
-      runOnDemandRestart: true,
-      // Thời gian chờ FFmpeg sẵn sàng push (re-encode cần warm-up)
-      runOnDemandStartTimeout: "30s",
-      runOnDemandCloseAfter: "3s",
+      source: rtspUrl,
+      sourceOnDemand: true,
+      // Xoá config cũ (runOnDemand từ WebRTC) nếu path đã tồn tại trước đó
+      runOnDemand: "",
+      runOnUnDemand: "",
     };
 
-    try {
-      await axios.post(
-        `${this.apiBaseUrl}/v3/config/paths/add/${pathId}`,
-        payload,
-        { auth: this.apiAuth },
-      );
-      this.logger.log(`[MediaMTX] Path "${pathId}" đã được tạo mới`);
-    } catch (error: any) {
-      const httpStatus = error?.response?.status;
+    const getUrl = `${this.apiBaseUrl}/v3/config/paths/get/${pathId}`;
+    const addUrl = `${this.apiBaseUrl}/v3/config/paths/add/${pathId}`;
+    const patchUrl = `${this.apiBaseUrl}/v3/config/paths/patch/${pathId}`;
 
-      if (httpStatus === 400) {
-        // Path đã tồn tại → cập nhật RTSP source mới nhất từ DB
-        this.logger.log(
-          `[MediaMTX] Path "${pathId}" đã tồn tại, đang cập nhật source...`,
-        );
-        try {
-          await axios.patch(
-            `${this.apiBaseUrl}/v3/config/paths/patch/${pathId}`,
-            payload,
-            { auth: this.apiAuth },
-          );
-          this.logger.log(`[MediaMTX] Path "${pathId}" đã được cập nhật`);
-        } catch (patchErr: any) {
-          this.logger.error(
-            `[MediaMTX] Lỗi PATCH path "${pathId}": ${patchErr.message}`,
-          );
-          throw new HttpException(
-            `Không thể cập nhật cấu hình MediaMTX: ${patchErr.message}`,
-            HttpStatus.INTERNAL_SERVER_ERROR,
-          );
-        }
-      } else {
-        // Lỗi khác (MediaMTX chưa khởi động, sai địa chỉ, v.v.)
-        this.logger.error(
-          `[MediaMTX] Lỗi kết nối API (status ${httpStatus}): ${error.message}`,
-        );
+    // 1. Check path exists
+    let exists = false;
+    try {
+      const getRes = await axios.get(getUrl, { auth: this.apiAuth });
+      this.logger.log(
+        `[MediaMTX] GET ${getUrl} → ${getRes.status} (path tồn tại)`,
+      );
+      exists = true;
+    } catch (getErr: any) {
+      const getStatus = getErr?.response?.status;
+      this.logger.log(
+        `[MediaMTX] GET ${getUrl} → ${getStatus} (path chưa tồn tại)`,
+      );
+      if (getStatus !== 404) {
+        const getBody = JSON.stringify(getErr?.response?.data ?? {});
         throw new HttpException(
-          `Không thể kết nối MediaMTX server: ${error.message}`,
+          `MediaMTX GET thất bại (${getStatus}): ${getBody}`,
           HttpStatus.BAD_GATEWAY,
         );
       }
     }
-  }
 
-  /**
-   * Lấy danh sách các đoạn video đã ghi cho camera.
-   * Gọi Playback API của MediaMTX: GET :9996/list?path={id}
-   * Trả về mảng segment kèm pre-signed URL để FE phát trực tiếp.
-   * (Giữ lại cho backward compatibility / tính năng browse recordings riêng)
-   */
-  async getRecordings(id: string): Promise<{
-    recordings: RecordingSegment[];
-    playbackBaseUrl: string;
-    token: string;
-  }> {
-    const camera = cameraStore.findById(id);
-    if (!camera) {
-      throw new NotFoundException(`Camera "${id}" không tồn tại`);
-    }
-
-    const token = jwt.sign({ cameraId: id }, this.jwtSecret, {
-      expiresIn: "24h",
-    });
-
-    const playbackBase = `http://${this.mediamtxHost}:${this.mediamtxPlaybackPort}`;
-
-    try {
-      const res = await axios.get(`${playbackBase}/list`, {
-        params: { path: id, token },
-        auth: this.apiAuth,
-      });
-
-      const raw: { start: string; duration: number }[] = res.data ?? [];
-
-      const recordings: RecordingSegment[] = raw.map((seg) => {
-        const startDate = new Date(seg.start);
-        const label = startDate.toLocaleString("vi-VN", {
-          timeZone: "Asia/Ho_Chi_Minh",
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
+    // 2. PATCH or POST based on existence
+    if (exists) {
+      this.logger.log(
+        `[MediaMTX] PATCH ${patchUrl} payload=${JSON.stringify(payload)}`,
+      );
+      try {
+        const patchRes = await axios.patch(patchUrl, payload, {
+          auth: this.apiAuth,
         });
-
-        const totalSec = Math.floor(seg.duration);
-        const h = Math.floor(totalSec / 3600);
-        const m = Math.floor((totalSec % 3600) / 60);
-        const s = totalSec % 60;
-        const durationLabel = [h ? `${h}h` : "", m ? `${m}ph` : "", `${s}s`]
-          .filter(Boolean)
-          .join(" ");
-
-        const url =
-          `${playbackBase}/get?path=${encodeURIComponent(id)}` +
-          `&start=${encodeURIComponent(seg.start)}` +
-          `&duration=${Math.ceil(seg.duration)}` +
-          `&token=${token}`;
-
-        return {
-          start: seg.start,
-          duration: seg.duration,
-          durationLabel,
-          label,
-          url,
-        };
-      });
-
-      // Sắp xếp mới nhất lên đầu
-      recordings.sort(
-        (a, b) => new Date(b.start).getTime() - new Date(a.start).getTime(),
-      );
-
-      return { recordings, playbackBaseUrl: playbackBase, token };
-    } catch (err: any) {
-      if (err?.response?.status === 404) {
-        return { recordings: [], playbackBaseUrl: playbackBase, token };
+        this.logger.log(
+          `[MediaMTX] PATCH ${patchUrl} → ${patchRes.status} (đã cập nhật)`,
+        );
+      } catch (patchErr: any) {
+        const patchStatus = patchErr?.response?.status;
+        const patchBody = JSON.stringify(patchErr?.response?.data ?? {});
+        this.logger.error(
+          `[MediaMTX] PATCH ${patchUrl} → ${patchStatus} body=${patchBody}`,
+        );
+        throw new HttpException(
+          `MediaMTX PATCH thất bại (${patchStatus}): ${patchBody}`,
+          HttpStatus.BAD_GATEWAY,
+        );
       }
-      this.logger.error(
-        `[Playback] Lỗi lấy recordings cho "${id}": ${err.message}`,
+    } else {
+      this.logger.log(
+        `[MediaMTX] POST ${addUrl} payload=${JSON.stringify(payload)}`,
       );
-      throw new HttpException(
-        "Không thể lấy danh sách recording",
-        HttpStatus.BAD_GATEWAY,
-      );
+      try {
+        const addRes = await axios.post(addUrl, payload, {
+          auth: this.apiAuth,
+        });
+        this.logger.log(
+          `[MediaMTX] POST ${addUrl} → ${addRes.status} (đã tạo mới)`,
+        );
+      } catch (addErr: any) {
+        const addStatus = addErr?.response?.status;
+        const addBody = JSON.stringify(addErr?.response?.data ?? {});
+        this.logger.error(
+          `[MediaMTX] POST ${addUrl} → ${addStatus} body=${addBody}`,
+        );
+        throw new HttpException(
+          `MediaMTX POST thất bại (${addStatus}): ${addBody}`,
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
     }
   }
 

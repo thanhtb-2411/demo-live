@@ -2,13 +2,12 @@ version: "3.8"
 
 # ============================================================
 # Live Stream Camera System: MediaMTX + NestJS Backend + Next.js Frontend
-# Sử dụng network_mode: host để WebRTC ICE candidates hoạt động
-# đúng trên Linux (không cần cấu hình thêm webrtcAdditionalHosts).
+# Flow: RTSP Camera → MediaMTX (source passthrough) → HLS → Browser
 # ============================================================
 
 services:
   # ----------------------------------------------------------
-  # 1. MediaMTX – Media Server (WebRTC WHEP + REST API)
+  # 1. MediaMTX – Media Server (HLS + REST API)
   # ----------------------------------------------------------
   mediamtx:
     image: bluenviron/mediamtx:latest-ffmpeg
@@ -36,12 +35,7 @@ services:
       - MEDIAMTX_API_PORT=${MEDIAMTX_API_PORT:-9997}
       - MEDIAMTX_API_USER=${MEDIAMTX_API_USER:-admin_user}
       - MEDIAMTX_API_PASS=${MEDIAMTX_API_PASS:-admin_password}
-      - MEDIAMTX_WEBRTC_PORT=${MEDIAMTX_WEBRTC_PORT:-8889}
-      - MEDIAMTX_PLAYBACK_PORT=${MEDIAMTX_PLAYBACK_PORT:-9996}
       - MEDIAMTX_HLS_PORT=${MEDIAMTX_HLS_PORT:-8888}
-      - MEDIAMTX_RTSP_TRANSPORT=${MEDIAMTX_RTSP_TRANSPORT:-tcp}
-      - MEDIAMTX_RTSP_PORT=${MEDIAMTX_RTSP_PORT:-8554}
-      - MEDIAMTX_REENCODER_PASS=${MEDIAMTX_REENCODER_PASS:-reencoder123}
       - DVR_WINDOW_SECONDS=${DVR_WINDOW_SECONDS:-600}
       - JWT_SECRET=${JWT_SECRET}
       - DEMO_RTSP=${DEMO_RTSP}
