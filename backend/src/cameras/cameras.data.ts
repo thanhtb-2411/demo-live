@@ -61,37 +61,17 @@ class CameraStore {
 
 const DEMO_RTSP = process.env.DEMO_RTSP;
 
-export const cameraStore = new CameraStore([
-  {
-    id: "CTR01",
-    name: "Camera Cổng Vào",
+const list = [];
+
+for (let i = 1; i <= 20; i++) {
+  list.push({
+    // Sử dụng padStart để tạo chuỗi format '01', '02', ..., '10'
+    id: `CTR${i.toString().padStart(2, "0")}`,
+    name: `Thanh${i}`,
     video: {
-      source: DEMO_RTSP,
+      source: DEMO_RTSP, // Đảm bảo bạn đã khai báo biến DEMO_RTSP trước đó
       options: { hwaccel: "auto", rtsp_transport: "tcp" },
     },
-  },
-  {
-    id: "CTR02",
-    name: "Camera Cổng Ra",
-    video: {
-      source: DEMO_RTSP,
-      options: { hwaccel: "auto", rtsp_transport: "tcp" },
-    },
-  },
-  {
-    id: "CTR03",
-    name: "Camera Hành Lang A",
-    video: {
-      source: DEMO_RTSP,
-      options: { hwaccel: "auto", rtsp_transport: "tcp" },
-    },
-  },
-  {
-    id: "CTR04",
-    name: "Camera Khu Kho",
-    video: {
-      source: DEMO_RTSP,
-      options: { hwaccel: "auto", rtsp_transport: "tcp" },
-    },
-  },
-]);
+  });
+}
+export const cameraStore = new CameraStore(list);

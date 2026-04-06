@@ -48,8 +48,7 @@ srt: false
 # RTSP Server – chỉ bind localhost, dùng nội bộ để FFmpeg
 # re-encode và push stream trở lại MediaMTX.
 ###############################################################
-rtsp: yes
-rtspAddress: 127.0.0.1:8554
+qrtspAddress: 127.0.0.1:8554
 
 ###############################################################
 # WebRTC Server – Giao thức phát WHEP đến trình duyệt (LIVE)

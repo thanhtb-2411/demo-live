@@ -133,7 +133,7 @@ export class CamerasService {
     // -g 30 -keyint_min 25 -sc_threshold 0: GOP ~1s, không bị scene-cut insert keyframe
     // -tune zerolatency: tắt B-frame, giảm buffer → độ trễ thấp cho WebRTC
     const ffmpegCmd = [
-      `ffmpeg -hide_banner -loglevel warning`,
+      `ffmpeg -nostdin -hide_banner -loglevel warning`,
       `-rtsp_transport ${this.mediamtxRtspTransport}`,
       `-i '${rtspUrl}'`,
       `-c:v libx264 -preset veryfast -tune zerolatency`,
@@ -147,7 +147,7 @@ export class CamerasService {
       runOnDemandRestart: true,
       // Thời gian chờ FFmpeg sẵn sàng push (re-encode cần warm-up)
       runOnDemandStartTimeout: "30s",
-      runOnDemandCloseAfter: "10s",
+      runOnDemandCloseAfter: "3s",
     };
 
     try {
