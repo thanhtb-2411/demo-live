@@ -59,6 +59,8 @@ rtspAddress: 127.0.0.1:8554
 webrtc: yes
 webrtcAddress: :8889
 webrtcLocalUDPAddress: :8189
+webrtcAdditionalHosts: []
+
 ###############################################################
 # RTSP Server – MediaMTX dùng nội bộ để kéo luồng từ Camera
 ###############################################################
