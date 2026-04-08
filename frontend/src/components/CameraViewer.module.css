@@ -31,6 +31,59 @@
   margin-bottom: 28px;
 }
 
+.quickWhepBox {
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 16px;
+}
+
+.quickWhepRow {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.quickWhepInput {
+  flex: 1;
+  min-width: 0;
+  background: #111827;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #e2e8f0;
+  font-size: 0.875rem;
+  font-family: monospace;
+  outline: none;
+}
+
+.quickWhepInput:focus {
+  border-color: #3b82f6;
+}
+
+.quickWhepInput::placeholder {
+  color: #475569;
+}
+
+.quickWhepBtn {
+  background: #2563eb;
+  border: 1px solid #3b82f6;
+  border-radius: 8px;
+  padding: 10px 16px;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.quickWhepBtn:hover {
+  background: #1d4ed8;
+}
+
 .sectionTitle {
   font-size: 0.875rem;
   font-weight: 600;
@@ -384,4 +437,11 @@
 .deleteConfirmBtn:hover {
   background: #991b1b;
   color: #fff;
+}
+
+@media (max-width: 760px) {
+  .quickWhepRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }

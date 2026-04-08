@@ -126,9 +126,9 @@ export default function CameraPlayer({
   const timelineSec = timelineMs / 1000;
   timelineSecRef.current = timelineSec;
 
-  // Refresh "now" every 2s so timeline keeps growing
+  // Refresh "now" every 1s so timeline keeps growing
   useEffect(() => {
-    const id = setInterval(() => setNowTime(new Date()), 100);
+    const id = setInterval(() => setNowTime(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
 
@@ -281,44 +281,13 @@ export default function CameraPlayer({
               statsTimerRef.current = null;
             }
 
+            // Stats timer: only track for frozen-stream detection (no logging to avoid memory creep)
             statsTimerRef.current = setInterval(async () => {
               if (!pcRef.current) return;
               try {
                 const report = await pcRef.current.getStats();
                 report.forEach((r) => {
                   if (r.type === "inbound-rtp" && r.kind === "video") {
-                    const prev = prevInboundVideoStatsRef.current;
-                    let derived: Record<string, number> | undefined;
-
-                    if (prev && r.timestamp > prev.timestamp) {
-                      const dtSec = (r.timestamp - prev.timestamp) / 1000;
-                      if (dtSec > 0) {
-                        const deltaBytes =
-                          (r.bytesReceived ?? 0) - (prev.bytesReceived ?? 0);
-                        const deltaPackets =
-                          (r.packetsReceived ?? 0) -
-                          (prev.packetsReceived ?? 0);
-                        const deltaFrames =
-                          (r.framesDecoded ?? 0) - (prev.framesDecoded ?? 0);
-                        const deltaKeyFrames =
-                          (r.keyFramesDecoded ?? 0) -
-                          (prev.keyFramesDecoded ?? 0);
-
-                        derived = {
-                          bitrateKbps: Number(
-                            ((deltaBytes * 8) / dtSec / 1000).toFixed(1),
-                          ),
-                          packetsPerSec: Number(
-                            (deltaPackets / dtSec).toFixed(1),
-                          ),
-                          decodedFps: Number((deltaFrames / dtSec).toFixed(2)),
-                          keyFramesPerSec: Number(
-                            (deltaKeyFrames / dtSec).toFixed(2),
-                          ),
-                        };
-                      }
-                    }
-
                     prevInboundVideoStatsRef.current = {
                       timestamp: r.timestamp,
                       bytesReceived: r.bytesReceived,
@@ -326,28 +295,12 @@ export default function CameraPlayer({
                       framesDecoded: r.framesDecoded,
                       keyFramesDecoded: r.keyFramesDecoded,
                     };
-
-                    logDiag("stats:inbound-video", {
-                      timestamp: r.timestamp,
-                      packetsReceived: r.packetsReceived,
-                      packetsLost: r.packetsLost,
-                      jitter: r.jitter,
-                      bytesReceived: r.bytesReceived,
-                      framesDecoded: r.framesDecoded,
-                      framesDropped: r.framesDropped,
-                      framesPerSecond: r.framesPerSecond,
-                      keyFramesDecoded: r.keyFramesDecoded,
-                      pliCount: r.pliCount,
-                      firCount: r.firCount,
-                      nackCount: r.nackCount,
-                      ...derived,
-                    });
                   }
                 });
-              } catch (statsErr) {
-                warnDiag("stats:error", statsErr);
+              } catch {
+                /* ignore */
               }
-            }, 2000);
+            }, 10_000);
           } else if (s === "disconnected") {
             // Transient – give 5 s to self-heal before reconnecting
             scheduleReconnect(5);
@@ -540,21 +493,8 @@ export default function CameraPlayer({
           ? video.getVideoPlaybackQuality()
           : null;
 
-      logDiag("video:playback", {
-        currentTime: Number(t.toFixed(3)),
-        paused: video.paused,
-        readyState: video.readyState,
-        networkState: video.networkState,
-        droppedVideoFrames: quality?.droppedVideoFrames,
-        totalVideoFrames: quality?.totalVideoFrames,
-      });
-
       if (lastTime >= 0 && t === lastTime && !video.paused) {
         stalledCount += 1;
-        warnDiag("video:stalled", {
-          currentTime: t,
-          stalledCount,
-        });
         // Video không tiến sau 20s → stream bị đóng băng, reconnect
         retryCountRef.current += 1;
         setRetryKey((k) => k + 1);

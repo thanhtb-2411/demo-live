@@ -31,6 +31,7 @@ export class CamerasService {
   private readonly mediamtxHlsPort = process.env.MEDIAMTX_HLS_PORT || "8888";
   private readonly mediamtxRtspTransport =
     process.env.MEDIAMTX_RTSP_TRANSPORT || "tcp";
+  private readonly mediamtxUseFfmpegCmd = true;
   private readonly mediamtxRtspPort = process.env.MEDIAMTX_RTSP_PORT || "8554";
   private readonly mediamtxReencoderPass =
     process.env.MEDIAMTX_REENCODER_PASS || "reencoder123";
@@ -126,29 +127,32 @@ export class CamerasService {
     pathId: string,
     rtspUrl: string,
   ): Promise<void> {
-    // URL để FFmpeg push stream re-encoded vào MediaMTX
     const rtspPushUrl = `rtsp://reencoder:${this.mediamtxReencoderPass}@127.0.0.1:${this.mediamtxRtspPort}/${pathId}`;
 
-    // FFmpeg: pull → re-encode H.264 với GOP cố định → push về MediaMTX
-    // -g 30 -keyint_min 25 -sc_threshold 0: GOP ~1s, không bị scene-cut insert keyframe
-    // -tune zerolatency: tắt B-frame, giảm buffer → độ trễ thấp cho WebRTC
     const ffmpegCmd = [
-      `ffmpeg -hide_banner -loglevel warning`,
-      `-rtsp_transport ${this.mediamtxRtspTransport}`,
+      "ffmpeg -hide_banner -loglevel warning",
+      "-nostdin",
+      "-fflags nobuffer",
+      `-rtsp_transport tcp`,
       `-i '${rtspUrl}'`,
-      `-c:v libx264 -preset veryfast -tune zerolatency`,
-      `-g 30 -keyint_min 25 -sc_threshold 0`,
-      `-c:a aac`,
+      "-c:v copy",
+      "-an",
       `-f rtsp '${rtspPushUrl}'`,
     ].join(" ");
 
-    const payload = {
-      runOnDemand: ffmpegCmd,
-      runOnDemandRestart: true,
-      // Thời gian chờ FFmpeg sẵn sàng push (re-encode cần warm-up)
-      runOnDemandStartTimeout: "30s",
-      runOnDemandCloseAfter: "10s",
-    };
+    const payload = this.mediamtxUseFfmpegCmd
+      ? {
+          runOnDemand: ffmpegCmd,
+          runOnDemandRestart: false,
+          runOnDemandStartTimeout: "20s",
+          runOnDemandCloseAfter: "3s", // Kill FFmpeg ngay sau 3s không còn viewer
+        }
+      : {
+          // Fallback: dùng RTSP source trực tiếp, không chạy FFmpeg re-encoder
+          source: rtspUrl,
+          sourceOnDemand: true,
+          sourceProtocol: this.mediamtxRtspTransport,
+        };
 
     try {
       await axios.post(

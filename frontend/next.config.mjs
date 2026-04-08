@@ -6,7 +6,7 @@ const nextConfig = {
    * tránh vấn đề CORS, ẩn URL backend khỏi trình duyệt.
    */
   async rewrites() {
-    const backendUrl = process.env.BACKEND_URL || "http://localhost:3001";
+    const backendUrl = process.env.BACKEND_URL || "http://localhost:3002";
     return [
       {
         source: "/api/:path*",

@@ -32,6 +32,7 @@ services:
     env_file:
       - .env
     environment:
+      - PORT=3002
       - MEDIAMTX_HOST=${MEDIAMTX_HOST:-localhost}
       - MEDIAMTX_API_PORT=${MEDIAMTX_API_PORT:-9997}
       - MEDIAMTX_API_USER=${MEDIAMTX_API_USER:-admin_user}
@@ -53,13 +54,15 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - BACKEND_URL=http://localhost:3002
     container_name: frontend
     restart: unless-stopped
     network_mode: host
     env_file:
       - .env
     environment:
-      - BACKEND_URL=http://localhost:3001
+      - BACKEND_URL=http://localhost:3002
     depends_on:
       - backend
 
